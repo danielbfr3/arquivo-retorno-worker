@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      Robô 2 recebe a conclusão da conversão assíncrona via AWS SQS (ver
+      docs/regras-de-negocio.md). Trocar de tecnologia de broker significa
+      reescrever só SqsConsumerHostedService.cs — a interface
+      IMessageService<T> não muda.
+    -->
+    <PackageReference Include="AWSSDK.SQS" Version="4.0.100.5" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+  </ItemGroup>
+</Project>

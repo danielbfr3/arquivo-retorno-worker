@@ -1,0 +1,36 @@
+version: "3.9"
+
+# Sobe as dependências locais dos dois robôs:
+# - cobranca-sqlserver: emula a base de cobrança existente (CASH_COBRANCA,
+#   schema real em docs/cash-cobranca-referencia.md) — usa Azure SQL Edge em
+#   vez do SQL Server "real" pra funcionar em ARM64 (Apple Silicon); mesmo
+#   protocolo T-SQL. Usada só pelo Robô 1 (Robô 2 extrai o documento do
+#   próprio CNAB gerado, não consulta o banco).
+#
+# Sem broker local: o Robô 2 consome uma fila SQS real (AWS) — não há
+# emulação local (LocalStack SQS ou similar) configurada ainda
+# (TODO(a-confirmar)), mesmo tratamento já dado à API Gestor Arquivo/API de
+# conversão (também sem emulação local, apontam pro ambiente de
+# homologação real).
+#
+# Nenhum dos dois robôs usa banco próprio (Postgres) — o Robô 1 não
+# persiste nada (idempotência via arquivo, ver
+# CnabRetorno.RetornoCron.Worker/Origem/ControleIdempotenciaDiario.cs) e o
+# Robô 2 nunca usou.
+#
+# Uso:
+#   docker compose -f docker-compose.local.yml up -d
+#   dotnet run --project src/CnabRetorno.RetornoCron.Worker --launch-profile Local
+#   dotnet run --project src/CnabRetorno.RetornoSubscriber.Worker --launch-profile Local
+#
+services:
+  cobranca-sqlserver:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: cnab-retorno-cobranca-sqlserver
+    ports:
+      - "1433:1433"
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Dev12345!"
+    volumes:
+      - ./.cobranca-sqlserver-data:/var/opt/mssql

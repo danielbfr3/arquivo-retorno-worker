@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <!--
+    Sem PackageReference de propósito: este projeto modela o futuro
+    "arquivo-core-lib" (submodule compartilhado entre workers da família
+    "arquivo retorno"). Zero dependência de provider de banco, HTTP ou
+    broker concretos — só tipos de domínio e contratos (interfaces/DTOs)
+    que os workers concretos implementam.
+  -->
+</Project>

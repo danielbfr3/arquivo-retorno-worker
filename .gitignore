@@ -1,0 +1,20 @@
+# .NET build artifacts
+bin/
+obj/
+*.user
+
+# Test results
+[Tt]est[Rr]esult*/
+
+# macOS
+.DS_Store
+
+# IDE
+.vs/
+.idea/
+
+# Local scratch data
+.dados-teste/
+.floci-data/
+.postgres-data/
+.cobranca-sqlserver-data/
