@@ -1,13 +1,16 @@
 # Evoluindo o pipeline com libs externas (git submodules)
 
 > **Nota:** o fluxo esboçado abaixo (remessa V/PV, D-1, consolidação,
-> conversão final) já foi implementado de verdade como os dois robôs
-> `CnabRetorno.RetornoCron.Worker`/`CnabRetorno.RetornoSubscriber.Worker`
-> (ver `README.md` raiz) — `ArquivoRetornoWorkerPreview.cs`, citado abaixo,
-> foi removido nesse processo. Este guia continua válido como referência
-> conceitual pra quando as libs reais de conversão/persistência (hoje só
-> stubadas via `ILayoutConversaoApiClient`/API HTTP) forem trazidas via git
-> submodule de verdade.
+> conversão final) era o escopo de **retorno de cobrança**, que já não
+> existe neste repositório — os dois robôs atuais são a ingestão de
+> remessas de VAN e a geração de retorno de **pagamentos** (ver
+> `README.md` raiz). Classes citadas abaixo como
+> `ArquivoRetornoWorkerPreview.cs` foram removidas.
+>
+> O guia continua válido como referência **conceitual**: a regra de
+> adaptador único por integração externa segue em vigor, hoje aplicada a
+> APIs HTTP (`ILayoutConversaoApiClient`, `IGestorArquivosApiClient`) em
+> vez de libs por submodule.
 
 Guia para quando o worker precisar crescer na direção do fluxo esboçado em
 `ArquivoRetornoWorkerPreview.cs` — remessa + retorno pareados, consulta de

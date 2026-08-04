@@ -15,11 +15,11 @@ escrever campo + construtor + atribuição à mão. Usado em praticamente todo
 serviço/repositório do projeto:
 
 ```csharp
-// src/CnabRetorno.RetornoSubscriber.Worker/Persistencia/ArquivoRepository.cs
-public class ArquivoRepository(CobrancaDbContext db)
+// src/CnabRetorno.PagamentoRetorno.Worker/Persistencia/ArquivoRepository.cs
+public class ArquivoRepository(PagamentoDbContext db, IOptions<RegistroArquivoOptions> opcoes)
 {
-    public Task<Arquivo?> ObterPorIdAsync(Guid arquivoId, CancellationToken ct)
-        => db.Arquivos.FirstOrDefaultAsync(a => a.ArquivoID == arquivoId, ct);
+    public Task RemoverAsync(Guid arquivoId, CancellationToken ct)
+        => ...; // "db" e "opcoes" viram campos privados sem nenhuma linha extra
     // "db" já está disponível aqui, sem precisar de "private readonly CobrancaDbContext _db"
 }
 ```
@@ -36,13 +36,15 @@ Regra usada no projeto: **record para dado imutável sem identidade
 própria** (DTOs, mensagens, resultados de query), **classe para entidade
 com ciclo de vida e regras de transição de estado**.
 
-- Records: `ArquivoVPendente`, `ConversaoConcluidaMessage`, todos os DTOs
-  em `CnabRetorno.Core/Aplicacao/Dtos/` (`DadosConvertidos`/`TituloConvertido`
-  e afins) — inclusive usados com `with` pra criar uma cópia modificada sem
-  mutação (ver `MesclagemDadosConvertidos.Mesclar`, que faz
-  `v with { Titulos = ..., Totais = ... }`).
-- Classes: `Cnab240Campos`/`MesclagemDadosConvertidos` (lógica com estado
-  intermediário durante a mesclagem), `Arquivo` (entidade EF com
+- Records: `ArquivoPendente`, `SegmentosRemessa`, `Ocorrencia`,
+  `MovimentacoesDoCliente` e todos os DTOs em
+  `CnabRetorno.Core/Aplicacao/Dtos/` (`RetornoPagamentoJson`,
+  `LotePagamento` e afins) — inclusive usados com `with` pra criar uma
+  cópia modificada sem mutação (ver
+  `GerarRetornosPagamentoPipeline.ObterDeltaPorClienteAsync`, que faz
+  `cliente with { Movimentacoes = novas }`).
+- Classes: `Cnab240Campos`/`MontagemRetornoPagamento` (lógica pura sem
+  identidade própria), `Arquivo` (entidade EF com
   identidade e campos mutáveis de status/etapa), repositórios e serviços
   de aplicação em geral. Note que `Arquivo` aqui é uma **projeção**, não a
   entidade rica: a máquina de estados de verdade (que valida transição
@@ -98,21 +100,19 @@ estado interno dele silenciosamente** (não necessariamente lança exceção
 — pode gerar dado errado sem aviso). A solução:
 
 ```csharp
-// src/CnabRetorno.RetornoCron.Worker/Pipeline/ProcessarArquivosVePvPipeline.cs
-await Parallel.ForEachAsync(pendentes, opcoesParalelo, async (pendente, tokenItem) =>
-{
-    using var escopo = scopeFactory.CreateScope(); // um escopo de DI por arquivo
-    var processador = escopo.ServiceProvider.GetRequiredService<ProcessadorArquivoRetornoService>();
-    // "processador" resolve seu próprio CobrancaDbContext, isolado dos outros em voo
-    ...
-});
+// src/CnabRetorno.RemessaVan.Worker/Pipeline/IngerirRemessasVanPipeline.cs
+using var escopo = escopos.CreateScope(); // um escopo de DI por arquivo
+var processador = escopo.ServiceProvider
+    .GetRequiredService<ProcessadorArquivoRemessaService>();
+// "processador" resolve seu próprio CobrancaDbContext, isolado dos outros em voo
+return (await processador.ProcessarAsync(pendente, ct)).Resultado;
 ```
 
-Note que o mesmo cuidado **não** se aplica a `ControleIdempotenciaDiario`
-(registrado Singleton, ver Program.cs do Robô 1) — ele precisa ser
-compartilhado entre todas as tasks paralelas de propósito (é o mesmo
-estado "quais MD5 já processei hoje" que todo arquivo do lote consulta),
-por isso usa lock interno em vez de escopo por unidade de trabalho.
+Note que o mesmo cuidado **não** se aplica a `CatalogoMascarasVan` e
+`NomeArquivoAsa` (registrados Singleton, ver Program.cs do Robô 1) — são
+imutáveis depois de construídos (regex compilada uma vez, template lido
+uma vez), então compartilhá-los entre todas as tasks é seguro e evita
+recompilar a regex a cada arquivo.
 
 Isso usa `IServiceScopeFactory.CreateScope()` — pedir um novo escopo de DI
 manualmente, fora do escopo automático que o ASP.NET Core cria por
@@ -120,14 +120,14 @@ requisição (que não existe aqui, já que é um Worker, não uma API web).
 
 ### `IHostedService` / `BackgroundService`
 
-Todo processo de longa duração do projeto (o loop do Robô 1, o consumidor
-SQS do Robô 2) é um `BackgroundService` — classe base que só exige
+Todo processo de longa duração do projeto (a varredura do Robô 1, a grade
+de janelas do Robô 2) é um `BackgroundService` — classe base que só exige
 implementar `ExecuteAsync(CancellationToken)`, chamada automaticamente
 quando o host sobe e cancelada quando ele pede shutdown.
 
 ```csharp
-// src/CnabRetorno.RetornoCron.Worker/RetornoCronWorker.cs
-public class RetornoCronWorker(...) : BackgroundService
+// src/CnabRetorno.RemessaVan.Worker/RemessaVanWorker.cs
+public class RemessaVanWorker(...) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct) { ... }
 }
@@ -135,14 +135,14 @@ public class RetornoCronWorker(...) : BackgroundService
 
 ```csharp
 // Program.cs de cada robô
-builder.Services.AddHostedService<RetornoCronWorker>();
+builder.Services.AddHostedService<RemessaVanWorker>();
 ```
 
-`SqsConsumerHostedService<TMessage>` (`CnabRetorno.Common`) é a mesma
-ideia, só que genérica por tipo de mensagem — um `BackgroundService` com um
-laço `while (!ct.IsCancellationRequested)` fazendo long-polling
-(`ReceiveMessageAsync`) na fila, porque o trabalho real acontece por
-mensagem recebida, não numa sequência linear de passos.
+`PagamentoRetornoWorker` é a mesma ideia com outro gatilho: em vez de uma
+expressão cron, um laço que pergunta à `CalculadoraJanelas` qual é a
+próxima janela e dorme até lá. `SqsConsumerHostedService<TMessage>`
+(`CnabRetorno.Common`) é a terceira variante — long-polling numa fila —,
+hoje sem uso pelos robôs.
 
 ### Options pattern
 
@@ -202,39 +202,45 @@ Convenção fixa no projeto inteiro: `JsonNamingPolicy.CamelCase` em todo
 trafega em camelCase (`nomeEmpresa`), a policy faz a tradução automática
 nos dois sentidos (serializar e desserializar).
 
-`DadosConvertidos`/`TituloConvertido` (`Aplicacao/Dtos/`) são tipados desde
-o início, não `JsonElement` genérico — o contrato real da API de conversão
-foi confirmado por exemplo real (ver `docs/cash-cobranca-referencia.md`
-§2.4), então não há mais motivo pra evitar um tipo forte. O JSON combinado
-(V+PV+pendências) é serializado com
-`JsonSerializer.SerializeToUtf8Bytes(dados, JsonOpcoesSaida)` e enviado
-como o "arquivo" do upload multipart pro conversor assíncrono — ver
-`ProcessadorArquivoRetornoService.ProcessarAsync`.
+`RetornoPagamentoJson` e os tipos aninhados (`Aplicacao/Dtos/`) são
+tipados desde o início, não `JsonElement` genérico. O JSON montado é
+serializado com `JsonSerializer.SerializeToUtf8Bytes(dados, JsonOpcoes)` e
+enviado como o "arquivo" do upload multipart pro conversor síncrono — ver
+`ProcessadorRetornoPagamentoService.ProcessarAsync`.
+
+Uma diferença em relação ao envelope de resposta: `ConvertSyncUploadResponse`
+decodifica o CNAB em **Latin1**, não UTF-8. O layout é posicional e conta
+bytes — um caractere acentuado num nome de favorecido ocuparia duas
+posições em UTF-8 e deslocaria a linha inteira.
 
 ## 4. EF Core
 
 ### Nenhum `DbContext` deste projeto é dono de schema
 
 Diferente de um projeto EF Core típico (onde o `DbContext` controla o
-schema via `OnModelCreating` + Migrations), `CobrancaDbContext` — presente
-nos dois robôs, cada um com sua própria cópia apontando pra mesma base SQL
-Server — **não é dono de nada**: mapeia tabelas que já existem, de outro
-sistema. Isso muda o tratamento em relação ao uso "padrão" de EF Core:
+schema via `OnModelCreating` + Migrations), `CobrancaDbContext` (Robô 1) e
+`PagamentoDbContext` (Robô 2) apontam pra bases SQL Server de outros
+times — **não são donos de nada**: mapeiam tabelas que já existem. Isso
+muda o tratamento em relação ao uso "padrão" de EF Core:
 
 - **Sem Migrations, nunca** — o schema é de outro sistema; rodar
   `dotnet ef migrations add` aqui não faz sentido.
 - **Quase tudo é projeção sem chave** (`HasNoKey()`): o EF Core exige uma
   chave primária pra rastrear entidades entre leituras, mas como a maioria
   das entidades daqui só é lida, elas são tratadas como projeções puras de
-  query, sem identidade. Algumas usam `.ToSqlQuery()` com SQL escrito à
-  mão (`Titulo`, `InstrucaoComTitulo`), porque `HasNoKey()` não suporta
-  `Include`/navegação.
+  query, sem identidade. `MovimentacaoPagamento` usa `.ToSqlQuery()` com
+  SQL escrito à mão — um `UNION ALL` das cinco duplas de meio de
+  pagamento —, algo que navegação de EF não expressaria.
+- **A exceção com chave é a tabela de arquivos**, que é escrita, e
+  `ControleJanelaRetorno`, a única tabela que este projeto cria.
+  `QueryTrackingBehavior.NoTracking` no `OnConfiguring` afeta só consultas:
+  `Add`/`SaveChangesAsync` continuam funcionando normalmente.
 
 ```csharp
 // Robô 1 — projeção de leitura, sem chave
-mb.Entity<InstrucaoErro>(e =>
+mb.Entity<ParametroCliente>(e =>
 {
-    e.ToTable("InstrucaoErro", schema: "Instrucao");
+    e.ToTable("Parametro", schema: "Cobranca");
     e.HasNoKey();
     ...
 });
@@ -254,17 +260,16 @@ mb.Entity<Arquivo>(e =>
 
 Duas sutilezas que valem registrar:
 
-- **`QueryTrackingBehavior.NoTracking` não impede escrita.** No Robô 1 o
-  contexto tem `NoTracking` global (a maioria das operações é leitura), e
+- **`QueryTrackingBehavior.NoTracking` não impede escrita.** Os dois
+  contextos têm `NoTracking` global (a maioria das operações é leitura), e
   ainda assim `db.Arquivos.Add(...)` + `SaveChangesAsync()` funciona — a
   configuração afeta só o resultado de *consultas*, não entidades que você
-  adiciona explicitamente. O Robô 2 **não** usa `NoTracking`, porque lá a
-  operação é ler-e-atualizar a mesma entidade: sem tracking, o EF não
-  saberia o que mudou no `SaveChangesAsync`.
-- **`Remove` funciona em entidade não rastreada.** A compensação do Robô 1
-  (`ArquivoRepository.RemoverAsync`) busca com `NoTracking` e chama
-  `Remove` — o EF anexa a entidade no estado `Deleted` e gera o DELETE
-  normalmente.
+  adiciona explicitamente.
+- **Onde é ler-e-atualizar, pede-se tracking pontual.** O Robô 2 usa
+  `.AsTracking()` nas consultas de `MarcarRegistradoAsync`,
+  `RemoverAsync` e no avanço da marca d'água: sem tracking o EF não teria
+  o estado original pra saber o que mudou no `SaveChangesAsync`. É a
+  exceção explícita, não o padrão do contexto.
 
 Registrar um `DbContext` é igual a qualquer outro:
 
@@ -283,6 +288,11 @@ existe justamente pra falar com um schema de terceiro.
 
 ## 5. Mensageria (AWS SQS — `AWSSDK.SQS`)
 
+> Nenhum dos dois robôs atuais consome fila: o Robô 1 é ingestão pura e o
+> Robô 2 usa o conversor síncrono. A seção descreve a capacidade que fica
+> na biblioteca compartilhada, com todo nome de fila resolvido por
+> configuração (`SqsOptions.ResolverFila`), nunca literal em código.
+
 Implementado em `CnabRetorno.Common/Mensageria/`: `IMessageService<T>`
 como abstração de handler (o contrato que sobrevive a uma eventual troca
 de broker), `IAmazonSQS` singleton (client caro de abrir, ver seção 2),
@@ -298,31 +308,40 @@ depois do `VisibilityTimeout`.
 
 - **`[Fact]`** — teste sem parâmetro, um cenário.
 - **`[Theory]` + `[InlineData]`** — mesmo teste rodado com várias entradas
-  (`NomeArquivoRetornoTests.Deve_retornar_falso_para_nome_fora_do_padrao`,
-  três nomes de arquivo inválidos diferentes, uma implementação só).
-- **Testes de contrato JSON**: `ConvertSyncUploadResponseTests`
-  desserializa o exemplo *real* de resposta de `/v1/convert/sync/upload`
-  (`docs/cash-cobranca-referencia.md` §2.4) — não um JSON inventado —
-  garantindo que os DTOs continuam fiéis ao contrato se alguém mexer neles
-  no futuro.
-- **Fixture por objeto tipado, não texto posicional**: `MesclagemDadosConvertidosTests`/
-  `PendenciasParaTitulosConvertidosFactoryTests` constroem `Titulo`/
-  `TituloConvertido`/`DadosConvertidos` direto via `new() { ... }` — como a
-  mesclagem hoje é a nível de JSON (DTOs tipados), não sobra a necessidade
-  de um builder de linha CNAB posicional pros testes de mesclagem.
+  (`MascaraVanTests.Deve_casar_as_formas_reais_de_mascara`, cinco formas
+  de máscara diferentes, uma implementação só).
+- **Testes de contrato JSON**: `ConvertSyncUploadResponseTests` trava o
+  comportamento de que o robô depende no envelope do conversor —
+  reconhecer texto e base64, decodificar em Latin1 (o layout conta bytes) e
+  **falhar alto** quando não vem conteúdo, em vez de gravar um arquivo
+  vazio como se fosse legítimo.
+- **Fixture por objeto tipado, com um construtor de linha posicional só
+  onde é o assunto**: `MontagemRetornoPagamentoTests` monta
+  `MovimentacaoPagamento` via `new() { ... }`; os poucos testes que
+  precisam de CNAB cru (o de `Linhas` prevalecendo sobre as colunas)
+  constroem a linha de 240 posições por helper, porque ali o posicionamento
+  **é** o que está sendo testado.
+- **Modelo EF sem banco**: `ModeloEfTests` constrói os dois `DbContext` e
+  inspeciona o modelo. O EF só abre conexão na primeira consulta, então dá
+  pra validar chaves, schemas e propriedades sem coluna sem nenhum SQL
+  Server por perto — a única rede de proteção possível num ambiente sem as
+  bases.
 - **Sem infraestrutura real nos testes**: o projeto de testes não usa
-  mocks nem banco/broker real — tudo que depende de `CobrancaDbContext`/
-  `IAmazonSQS` fica de fora da suíte automatizada; a lógica pura (mapeamento,
-  mesclagem, parsing) é isolada em classes/métodos testáveis com POCOs.
+  mocks nem banco/broker real — tudo que depende de conexão viva fica de
+  fora da suíte automatizada; a lógica pura (máscaras, nomenclatura, grade
+  de janelas, montagem do JSON, parsing posicional) é isolada em
+  classes/métodos testáveis com POCOs. Ver
+  `docs/riscos-conhecidos.md` item 12 pro que isso deixa descoberto.
 
 ## 7. Padrões de arquitetura aplicados no projeto
 
 - **YAGNI nas abstrações**: nenhuma interface criada "pra garantir
   flexibilidade futura" — só onde já existe (ou é modelo explícito de) uma
-  segunda implementação real. `IArquivoRepository` só existe porque
-  poderia ter um fake de teste; `PastaOrigemArquivosRetorno` não tem
-  interface porque só existe uma origem possível hoje. Ver
-  `docs/evoluindo-com-libs-externas.md` pro raciocínio completo.
+  segunda implementação real. `IArmazenamentoArquivo` existe porque há
+  **duas** implementações de fato (Gestor de Arquivos e S3 direto);
+  `PastaOrigemRemessa` não tem interface porque só existe uma origem
+  possível hoje. Ver `docs/evoluindo-com-libs-externas.md` pro raciocínio
+  completo.
 - **Regra do adaptador único**: qualquer tipo de uma lib/API externa
   (`AWSSDK.SQS`, o shape da API de conversão, o shape do Gestor de
   Arquivos) é conhecido por **uma única classe** do projeto — os DTOs
@@ -330,12 +349,11 @@ depois do `VisibilityTimeout`.
   `LayoutConversaoApiClient`/`GestorArquivosApiClient`. Um breaking change
   na API externa vira um erro de compilação contido num arquivo, não
   espalhado pelo pipeline inteiro.
-- **State machine explícita**: `ArquivoRetorno` não expõe setters
-  públicos pros seus campos de estado — só métodos com nome de intenção
-  (`RegistrarJobConversao`, `Falhar`, `MarcarSemDadoSuficiente`) que
-  impõem a transição correta (`AtualizarEtapa` lança exceção se alguém
-  tentar regredir). Ver `docs/regras-de-negocio.md` pro diagrama completo.
-- **Falha isolada, retry natural**: erro em um arquivo/mensagem não
-  derruba o lote inteiro nem trava o processo — vira um contador de falha
-  (Robô 1) ou a mensagem simplesmente não é deletada da fila SQS (Robô 2),
-  e o item problemático é retentado na próxima execução/redelivery.
+- **Invariantes moram com o dono da tabela**: `Arquivo` aqui é uma
+  projeção deliberadamente burra, sem máquina de estados. A entidade rica
+  (que valida transição de status/etapa) vive na API dona da tabela;
+  replicá-la daria duas fontes de verdade divergindo com o tempo.
+- **Falha isolada, retry natural**: erro em um arquivo não derruba o lote
+  nem trava o processo — vira um contador de falha e quarentena (Robô 1)
+  ou uma linha removida por compensação (Robô 2), e o item problemático
+  volta na próxima execução.

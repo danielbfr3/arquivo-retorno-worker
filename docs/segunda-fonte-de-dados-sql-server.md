@@ -1,13 +1,19 @@
 # Segunda fonte de dados: código do cliente no core bancário via EF Core (SQL Server)
 
-> **Nota:** escrito para a arquitetura de projeto único (`CnabRetorno.Worker`)
-> anterior aos dois robôs — inclusive motivou a criação deles. O padrão
-> `CobrancaDbContext` somente-leitura descrito abaixo já está implementado
-> de verdade em `src/CnabRetorno.RetornoCron.Worker/Persistencia/CobrancaDbContext.cs`
-> e na cópia própria em `CnabRetorno.RetornoSubscriber.Worker`, agora com
-> `ParametroRetorno`/`RecusaErroProcessamento` (ver `README.md` raiz).
+> **Nota:** escrito para uma arquitetura de projeto único
+> (`CnabRetorno.Worker`) anterior aos robôs atuais. O padrão descrito
+> abaixo — projeção sem chave sobre banco de outro time, sem migrations,
+> tracking desligado — está implementado de verdade em
+> `src/CnabRetorno.RemessaVan.Worker/Persistencia/CobrancaDbContext.cs`
+> (base CASH_COBRANCA) e em
+> `src/CnabRetorno.PagamentoRetorno.Worker/Persistencia/PagamentoDbContext.cs`
+> (base ASA_CASH_PAGAMENTO, com o `UNION ALL` das cinco duplas de meio de
+> pagamento).
+>
 > Mantido como referência conceitual; caminhos de arquivo abaixo
-> (`src/CnabRetorno.Worker/...`) são do design anterior.
+> (`src/CnabRetorno.Worker/...`) e entidades citadas
+> (`ParametroRetorno`, `RecusaErroProcessamento`) são do design anterior e
+> não existem mais.
 
 Tutorial para adicionar uma leitura à "base de cobrança" (SQL Server,
 existente, fora do controle deste projeto) e obter o código do cliente no core bancário do

@@ -60,10 +60,23 @@
       "Bash(git tag *)",
       "Bash(grep -rnE \"[0-9]{11,14}\" --include=\"*.cs\" --include=\"*.md\" --include=\"*.json\" .)",
       "Bash(git commit *)",
-      "Bash(git commit -q -m ' *)"
+      "Bash(git commit -q -m ' *)",
+      "Bash(command -v pdftotext)",
+      "Bash(command -v mutool)",
+      "Bash(python3 -c \"import pypdf; print\\('pypdf', pypdf.__version__\\)\")",
+      "Bash(python3 -m pip install --quiet pypdf)",
+      "Bash(python3 -c \"import pypdf; print\\('ok', pypdf.__version__\\)\")",
+      "Read(//Users/danielbfr3/Downloads/**)",
+      "Bash(sed -n '282,560p' /Users/danielbfr3/Downloads/transcricao-telas-03-08-2026.md)",
+      "Bash(sed -n '1,160p' /Users/danielbfr3/Downloads/transcricao-telas-03-08-2026.md)",
+      "Bash(git rm *)",
+      "Bash(rm -rf /Users/danielbfr3/Downloads/arquivo-retorno-worker/src/*/bin /Users/danielbfr3/Downloads/arquivo-retorno-worker/src/*/obj /Users/danielbfr3/Downloads/arquivo-retorno-worker/tests/*/bin /Users/danielbfr3/Downloads/arquivo-retorno-worker/tests/*/obj && dotnet build CnabRetorno.slnx -v q --nologo 2>&1 | tail -10)",
+      "Bash(grep -n \"riscos-conhecidos.md\\\\` item 11\" docs/conceitos-dotnet-ef-core.md)",
+      "Bash(sed -i '' 's/`docs\\\\/riscos-conhecidos.md` item 11 pro que isso deixa descoberto/`docs\\\\/riscos-conhecidos.md` item 12 pro que isso deixa descoberto/' docs/conceitos-dotnet-ef-core.md)"
     ],
     "additionalDirectories": [
-      "/private/tmp/mermaid-check"
+      "/private/tmp/mermaid-check",
+      "/Users/danielbfr3/Downloads/arquivo-retorno-worker/src/*"
     ]
   }
 }

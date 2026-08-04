@@ -6,6 +6,21 @@
 > shape da mensagem SQS). Trechos marcados 🆕 vêm dessas rodadas posteriores.
 > Projeto: `arquivo-retorno-worker` / Solution `CnabRetorno.slnx` / ERD `cash-cobranca_v3.erd`
 
+> **Escopo — o que os robôs atuais realmente consomem daqui:**
+>
+> - `Cobranca.Arquivo` e `Cobranca.Parametro` — mapeadas pelo **Robô 1**
+>   (`RemessaVan.Worker/Persistencia/CobrancaDbContext.cs`).
+> - Contrato do **Gestor de Arquivos** (§3) — usado pelos dois robôs.
+> - Contrato do **conversor** (§2) — usado pelo Robô 2, no sentido JSON →
+>   CNAB (a resposta do sentido inverso, documentada em §2.4, não é mais
+>   desserializada por nenhum código).
+>
+> As seções de `Titulo.*` e `Instrucao.*`, e todo o de-para de
+> `TituloConvertido`, pertencem ao fluxo de **retorno de cobrança**, que
+> não existe mais neste repositório. Ficam como referência do schema da
+> base — que continua real —, não como descrição do que o código faz.
+> Pra pagamentos, ver [`pagamento-referencia.md`](pagamento-referencia.md).
+
 ---
 
 ## 1. Modelo de Dados — Banco CASH_COBRANCA

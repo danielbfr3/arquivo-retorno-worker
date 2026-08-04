@@ -1,32 +1,30 @@
-version: "3.9"
-
-# Sobe as dependências locais dos dois robôs:
-# - cobranca-sqlserver: emula a base de cobrança existente (CASH_COBRANCA,
-#   schema real em docs/cash-cobranca-referencia.md) — usa Azure SQL Edge em
-#   vez do SQL Server "real" pra funcionar em ARM64 (Apple Silicon); mesmo
-#   protocolo T-SQL. Usada só pelo Robô 1 (Robô 2 extrai o documento do
-#   próprio CNAB gerado, não consulta o banco).
+# Dependências locais dos dois robôs.
 #
-# Sem broker local: o Robô 2 consome uma fila SQS real (AWS) — não há
-# emulação local (LocalStack SQS ou similar) configurada ainda
-# (TODO(a-confirmar)), mesmo tratamento já dado à API Gestor Arquivo/API de
-# conversão (também sem emulação local, apontam pro ambiente de
-# homologação real).
+# - cobranca-sqlserver:  emula a base CASH_COBRANCA (Robô 1)
+# - pagamento-sqlserver: emula a base ASA_CASH_PAGAMENTO (Robô 2)
 #
-# Nenhum dos dois robôs usa banco próprio (Postgres) — o Robô 1 não
-# persiste nada (idempotência via arquivo, ver
-# CnabRetorno.RetornoCron.Worker/Origem/ControleIdempotenciaDiario.cs) e o
-# Robô 2 nunca usou.
+# Azure SQL Edge em vez do SQL Server "real" pra funcionar em ARM64
+# (Apple Silicon); mesmo protocolo T-SQL.
+#
+# Sem broker local: nenhum dos dois robôs consome fila hoje.
+#
+# As APIs externas (Gestor de Arquivos e conversor de layout) não têm
+# emulação local — apontam pro ambiente de homologação real, e as base
+# URLs em appsettings.json ainda estão como TODO(a-confirmar).
+#
+# Nenhum robô tem banco próprio: as duas bases são de outros times. A
+# única tabela criada por este projeto é Pagamento.ControleJanelaRetorno
+# (ver deploy/pagamento-controle-janela.sql).
 #
 # Uso:
 #   docker compose -f docker-compose.local.yml up -d
-#   dotnet run --project src/CnabRetorno.RetornoCron.Worker --launch-profile Local
-#   dotnet run --project src/CnabRetorno.RetornoSubscriber.Worker --launch-profile Local
+#   dotnet run --project src/CnabRetorno.RemessaVan.Worker
+#   dotnet run --project src/CnabRetorno.PagamentoRetorno.Worker
 #
 services:
   cobranca-sqlserver:
     image: mcr.microsoft.com/azure-sql-edge:latest
-    container_name: cnab-retorno-cobranca-sqlserver
+    container_name: cnab-cobranca-sqlserver
     ports:
       - "1433:1433"
     environment:
@@ -34,3 +32,14 @@ services:
       MSSQL_SA_PASSWORD: "Dev12345!"
     volumes:
       - ./.cobranca-sqlserver-data:/var/opt/mssql
+
+  pagamento-sqlserver:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: cnab-pagamento-sqlserver
+    ports:
+      - "1434:1433"
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Dev12345!"
+    volumes:
+      - ./.pagamento-sqlserver-data:/var/opt/mssql

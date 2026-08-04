@@ -78,22 +78,37 @@ public static class Cnab240Campos
     }
 
     /// <summary>
-    /// Extrai o CNPJ/CPF do cliente a partir do header de arquivo (linha
-    /// tipo '0', posições 19-32 — "Inscrição Empresa"). Chamado logo na
-    /// leitura do arquivo V (Robô 1) ou do CNAB final baixado (Robô 2),
-    /// antes de qualquer outro processamento.
+    /// Quebra um bloco CNAB em linhas de 240 posições.
+    ///
+    /// Aceita as duas formas que aparecem na prática: com separador de
+    /// linha (arquivo em disco) e sem separador nenhum (o campo
+    /// <c>Linhas</c> das tabelas <c>*Info</c>, onde os segmentos vêm
+    /// concatenados). Linhas com comprimento diferente de 240 são
+    /// descartadas — resto de arquivo truncado não pode virar registro.
     /// </summary>
-    public static string ExtrairCnpjHeaderArquivo(byte[] conteudoV)
+    public static IReadOnlyList<string> QuebrarLinhas(string bloco)
     {
-        var primeiraLinha = Encoding.Latin1.GetString(conteudoV)
-            .Replace("\r\n", "\n")
+        if (string.IsNullOrEmpty(bloco)) return [];
+
+        var normalizado = bloco.Replace("\r\n", "\n");
+
+        var comSeparador = normalizado
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault()
-            ?? throw new ArgumentException("Arquivo vazio — sem header de arquivo (tipo 0).");
+            .Where(l => l.Length == TamanhoLinha)
+            .ToList();
 
-        if (primeiraLinha.Length != TamanhoLinha || TipoRegistro(primeiraLinha) != '0')
-            throw new ArgumentException("Primeira linha não é um header de arquivo (tipo 0) válido.");
+        if (comSeparador.Count > 0) return comSeparador;
 
-        return LerTrim(primeiraLinha, 19, 32);
+        var semSeparador = new List<string>(normalizado.Length / TamanhoLinha);
+        for (var i = 0; i + TamanhoLinha <= normalizado.Length; i += TamanhoLinha)
+            semSeparador.Add(normalizado.Substring(i, TamanhoLinha));
+
+        return semSeparador;
     }
+
+    /// <summary>Lê um bloco CNAB de bytes em Latin1 — o layout é
+    /// posicional e conta bytes, então decodificar como UTF-8 deslocaria
+    /// todas as posições de uma linha com acento.</summary>
+    public static IReadOnlyList<string> QuebrarLinhas(byte[] conteudo)
+        => QuebrarLinhas(Encoding.Latin1.GetString(conteudo));
 }

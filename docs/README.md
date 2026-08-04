@@ -1,47 +1,44 @@
 # Documentação
 
-Guias funcionais e de referência técnica para os dois robôs de
-processamento de retorno CNAB (`CnabRetorno.RetornoCron.Worker` e
-`CnabRetorno.RetornoSubscriber.Worker`).
+Guias funcionais e de referência técnica dos dois robôs
+(`CnabRetorno.RemessaVan.Worker` e `CnabRetorno.PagamentoRetorno.Worker`).
 
 ## Comece por aqui
 
-- [`regras-de-negocio.md`](regras-de-negocio.md) — **o que** o sistema
-  faz: fluxo completo dos dois robôs com diagramas (Mermaid) de fluxo,
-  sequência entre sistemas e mesclagem de JSON (V+PV+pendências), tabela
-  de regras por passo e o que ainda está em aberto.
-- [`cash-cobranca-referencia.md`](cash-cobranca-referencia.md) — schema
-  real do banco CASH_COBRANCA, contrato real da API de conversão
-  (multipart upload, sync/async) e da API Gestor de Arquivo, de-para pro
-  `TituloConvertido` de pendência — fonte primária usada em
-  `CobrancaDbContext`, `CobrancaPendenciasRepository`,
-  `Json.PendenciasParaTitulosConvertidosFactory`/`MesclagemDadosConvertidos`
-  (Robô 1) e `GestorArquivosApiClient`/`GestorArquivoStorage` (Robô 2,
-  presign de upload).
-- [`conceitos-dotnet-ef-core.md`](conceitos-dotnet-ef-core.md) — **como**
-  o código usa .NET/C# e EF Core: DI e ciclo de vida (por que `DbContext`
-  precisa de escopo por unidade de trabalho), options pattern, leitura de
-  banco existente sem dono de schema, padrões de arquitetura aplicados —
-  cada tópico aponta pro arquivo real do projeto.
+- [`regras-de-negocio.md`](regras-de-negocio.md) — **o que** cada robô
+  faz: fluxo com diagramas, regra por passo com o porquê de cada decisão,
+  e a lista do que ainda está em aberto.
 - [`riscos-conhecidos.md`](riscos-conhecidos.md) — auditoria de riscos de
-  comportamento incorreto (duplicidade, perda silenciosa de dado,
-  inconsistência de trailer) encontrados no código já implementado,
-  diferente da lista de regras de negócio ainda não confirmadas
-  (`TODO(a-confirmar)`) — nenhum desses pontos foi corrigido ainda.
+  **comportamento** (o código roda e produz o resultado errado), diferente
+  da lista de dados de integração faltando.
 
-## Guias de evolução
+## Referências de integração
 
-Para quando o pipeline precisar crescer além do scaffold atual:
+- [`pagamento-referencia.md`](pagamento-referencia.md) — de-para entre a
+  base `ASA_CASH_PAGAMENTO` e o layout FEBRABAN 240: estrutura das cinco
+  duplas de tabelas, formas de lançamento, segmentos A/B/J/J-52,
+  totalizadores e domínio de ocorrências. Fonte primária de
+  `PagamentoDbContext`, `MontagemRetornoPagamento` e `Cnab240Pagamento`.
+- [`cash-cobranca-referencia.md`](cash-cobranca-referencia.md) — schema da
+  base `CASH_COBRANCA` e contratos das APIs de conversão e Gestor de
+  Arquivo. Fonte primária do Robô 1 e do client de storage compartilhado.
+- `Layout padrao CNAB240 V 10 11 - 21_08_2023-2.pdf` — o manual FEBRABAN
+  completo. As seções que interessam são §2.2 (header/trailer de
+  arquivo), §3.1 (pagamentos) e §4-G (campos genéricos).
 
-- [`evoluindo-com-libs-externas.md`](evoluindo-com-libs-externas.md) —
-  como trazer libs de conversão/persistência via git submodule sem
-  reintroduzir camadas desnecessárias. Escrito antes dos dois robôs
-  existirem; mantido como referência conceitual (ver nota no topo do doc).
+## Como o código funciona
+
+- [`conceitos-dotnet-ef-core.md`](conceitos-dotnet-ef-core.md) — DI e
+  ciclo de vida (por que `DbContext` precisa de escopo por unidade de
+  trabalho), options pattern, leitura de banco existente sem ser dono do
+  schema, padrões aplicados — cada tópico aponta pro arquivo real.
 - [`segunda-fonte-de-dados-sql-server.md`](segunda-fonte-de-dados-sql-server.md) —
-  o padrão usado pela base de cobrança (`CobrancaDbContext`), já
-  implementado de verdade em `src/*/Persistencia/CobrancaDbContext.cs`.
+  o padrão usado pelas duas bases de outros times, implementado em
+  `src/*/Persistencia/*DbContext.cs`.
+- [`evoluindo-com-libs-externas.md`](evoluindo-com-libs-externas.md) —
+  como trazer libs externas sem reintroduzir camadas desnecessárias.
+  Mantido como referência conceitual (ver nota no topo do doc).
 
 Mensageria (AWS SQS) está coberta em `conceitos-dotnet-ef-core.md` §5 e
-implementada em `CnabRetorno.Common/Mensageria/SqsConsumerHostedService.cs`
-— sem guia dedicado, dado que é uma dependência padrão do SDK da AWS, não
-uma lib de terceiro que precisasse de tutorial próprio.
+implementada em `CnabRetorno.Common/Mensageria/`. Nenhum dos robôs atuais
+consome fila — o suporte fica na biblioteca compartilhada.

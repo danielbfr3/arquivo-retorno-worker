@@ -15,6 +15,24 @@ public class SqsOptions
     /// (usa IAM role/variáveis de ambiente).</summary>
     public string? AccessKeyId { get; set; }
     public string? SecretAccessKey { get; set; }
+
+    /// <summary>
+    /// Filas por apelido lógico, resolvidas em configuração — nunca nome
+    /// de fila fixo em código. Cada ambiente aponta o mesmo apelido pra
+    /// uma fila diferente (<c>Sqs:Filas:ConversorValido</c> em
+    /// appsettings, sobrescrito por <c>Sqs__Filas__ConversorValido</c>
+    /// como variável de ambiente no cluster).
+    /// </summary>
+    public Dictionary<string, string> Filas { get; set; } = [];
+
+    /// <exception cref="InvalidOperationException">Apelido sem fila
+    /// configurada — falha no start, não na primeira mensagem.</exception>
+    public string ResolverFila(string apelido)
+        => Filas.TryGetValue(apelido, out var nome) && !string.IsNullOrWhiteSpace(nome)
+            ? nome
+            : throw new InvalidOperationException(
+                $"Fila '{apelido}' não configurada — definir Sqs:Filas:{apelido} " +
+                $"(ou a variável de ambiente Sqs__Filas__{apelido}).");
 }
 
 public sealed record SqsTopologia(

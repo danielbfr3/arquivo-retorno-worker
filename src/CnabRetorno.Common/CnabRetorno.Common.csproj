@@ -6,10 +6,21 @@
   </PropertyGroup>
   <ItemGroup>
     <!--
-      Robô 2 recebe a conclusão da conversão assíncrona via AWS SQS (ver
-      docs/regras-de-negocio.md). Trocar de tecnologia de broker significa
-      reescrever só SqsConsumerHostedService.cs — a interface
-      IMessageService<T> não muda.
+      Infra implementa contratos do domínio (IGestorArquivosApiClient) —
+      a dependência vai de Common pra Core, nunca o contrário: Core não
+      referencia nada.
+    -->
+    <ProjectReference Include="..\CnabRetorno.Core\CnabRetorno.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!--
+      Nenhum dos dois robôs atuais consome fila: o Robô 1 é ingestão pura
+      e o Robô 2 usa o conversor síncrono. O suporte a SQS fica aqui como
+      capacidade da biblioteca compartilhada (é a tecnologia de fila
+      padrão do ecossistema, e todo nome de fila vem de configuração —
+      ver Mensageria/SqsOptions.cs). Trocar de broker significa reescrever
+      só SqsConsumerHostedService.cs; a interface IMessageService<T> não
+      muda.
     -->
     <PackageReference Include="AWSSDK.SQS" Version="4.0.100.5" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
