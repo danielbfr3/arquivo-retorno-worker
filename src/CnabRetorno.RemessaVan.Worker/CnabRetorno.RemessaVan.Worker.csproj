@@ -25,6 +25,6 @@
       "GestorArquivos" (presigned URL), que não usa SDK nenhum — ver
       Storage/ArmazenamentoOptions.cs sobre por que as duas versões existem.
     -->
-    <PackageReference Include="AWSSDK.S3" Version="4.0.7.4" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.101.6" />
   </ItemGroup>
 </Project>

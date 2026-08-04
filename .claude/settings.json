@@ -72,7 +72,11 @@
       "Bash(git rm *)",
       "Bash(rm -rf /Users/danielbfr3/Downloads/arquivo-retorno-worker/src/*/bin /Users/danielbfr3/Downloads/arquivo-retorno-worker/src/*/obj /Users/danielbfr3/Downloads/arquivo-retorno-worker/tests/*/bin /Users/danielbfr3/Downloads/arquivo-retorno-worker/tests/*/obj && dotnet build CnabRetorno.slnx -v q --nologo 2>&1 | tail -10)",
       "Bash(grep -n \"riscos-conhecidos.md\\\\` item 11\" docs/conceitos-dotnet-ef-core.md)",
-      "Bash(sed -i '' 's/`docs\\\\/riscos-conhecidos.md` item 11 pro que isso deixa descoberto/`docs\\\\/riscos-conhecidos.md` item 12 pro que isso deixa descoberto/' docs/conceitos-dotnet-ef-core.md)"
+      "Bash(sed -i '' 's/`docs\\\\/riscos-conhecidos.md` item 11 pro que isso deixa descoberto/`docs\\\\/riscos-conhecidos.md` item 12 pro que isso deixa descoberto/' docs/conceitos-dotnet-ef-core.md)",
+      "Bash(curl -s \"https://api.nuget.org/v3-flatcontainer/awssdk.s3/index.json\")",
+      "Bash(python3 -c \"import json,sys; v=[x for x in json.load\\(sys.stdin\\)['versions'] if x.startswith\\('4.'\\) and '-' not in x]; print\\(v[-5:]\\)\")",
+      "Bash(sed 's/namespace CnabRetorno.PagamentoRetorno.Worker.Persistencia;/namespace CnabRetorno.RemessaVan.Worker.Persistencia;/; s/duas réplicas do worker de gerarem a mesma janela: sem/duas réplicas do worker de processarem a mesma varredura: sem/; s|isso, cada uma produziria um arquivo por cliente com NSAs diferentes —|isso, as duas leriam o mesmo arquivo da pasta e cada uma o ingeriria|; s|pior que um erro visível, porque os dois pareceriam legítimos. O banco|com um GUID próprio \\(a corrida de File.Move só derruba uma delas DEPOIS\\\\n/// do registro feito\\). O banco|; s/a réplica\\\\n/a réplica\\\\n/' src/CnabRetorno.PagamentoRetorno.Worker/Persistencia/LockExecucaoExclusiva.cs)",
+      "Bash(sed -i '' 's/perdedora pula a janela em vez de enfileirar atrás da vencedora e/perdedora pula a varredura em vez de enfileirar atrás da vencedora e/; s/gerar tudo de novo logo depois./varrer tudo de novo logo depois./' src/CnabRetorno.RemessaVan.Worker/Persistencia/LockExecucaoExclusiva.cs)"
     ],
     "additionalDirectories": [
       "/private/tmp/mermaid-check",

@@ -26,8 +26,12 @@ public sealed record MovimentacoesDoCliente(
 public class MovimentacoesRepository(PagamentoDbContext db, ILogger<MovimentacoesRepository> logger)
 {
     /// <summary>
-    /// Movimentações do dia até o instante da janela, agrupadas por
-    /// cliente.
+    /// Movimentações do dia útil — do consolidado anterior (exclusivo)
+    /// até o instante da janela (inclusivo) —, agrupadas por cliente.
+    ///
+    /// O piso **exclusivo** casa com o teto **inclusivo** da janela
+    /// anterior: um desfecho exatamente às 18h00.000 entrou no
+    /// consolidado de ontem e não pode reentrar hoje.
     ///
     /// Serve às duas janelas: o consolidado usa o resultado como está, e
     /// o parcial recorta por cliente depois, contra a marca d'água de cada
@@ -36,12 +40,12 @@ public class MovimentacoesRepository(PagamentoDbContext db, ILogger<Movimentacoe
     /// próprio ponto de corte, porque um pode ter falhado na janela
     /// anterior enquanto os outros passaram.
     /// </summary>
-    public async Task<List<MovimentacoesDoCliente>> ObterDoDiaAsync(
-        DateTime inicioDia, DateTime fimInclusivo, CancellationToken ct)
+    public async Task<List<MovimentacoesDoCliente>> ObterPeriodoAsync(
+        DateTime inicioExclusivo, DateTime fimInclusivo, CancellationToken ct)
     {
         var linhas = await db.Movimentacoes
             .Where(m => MovimentacaoRelatavel.StatusFinais.Contains(m.CodigoStatus))
-            .Where(m => (m.DataAtualizacao ?? m.DataCriacao) >= inicioDia
+            .Where(m => (m.DataAtualizacao ?? m.DataCriacao) > inicioExclusivo
                      && (m.DataAtualizacao ?? m.DataCriacao) <= fimInclusivo)
             .ToListAsync(ct);
 

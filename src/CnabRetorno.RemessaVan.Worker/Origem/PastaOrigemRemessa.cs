@@ -75,6 +75,21 @@ public class PastaOrigemRemessa(IOptions<OrigemOptions> opcoes, TimeProvider tem
     {
         var destinoPasta = Path.Combine(_opt.Pasta, subpasta);
         Directory.CreateDirectory(destinoPasta);
-        File.Move(caminho, Path.Combine(destinoPasta, Path.GetFileName(caminho)), overwrite: true);
+
+        // Nunca sobrescreve: dois arquivos de mesmo nome em dias
+        // diferentes são arquivos diferentes, e o segundo apagaria o
+        // primeiro em silêncio — na quarentena, isso é perder justamente
+        // a evidência do problema. Homônimo ganha sufixo de timestamp.
+        var destino = Path.Combine(destinoPasta, Path.GetFileName(caminho));
+        if (File.Exists(destino))
+        {
+            var nome = Path.GetFileNameWithoutExtension(caminho);
+            var extensao = Path.GetExtension(caminho);
+            destino = Path.Combine(
+                destinoPasta,
+                $"{nome}_{DateTime.UtcNow:yyyyMMddHHmmssfff}{extensao}");
+        }
+
+        File.Move(caminho, destino, overwrite: false);
     }
 }

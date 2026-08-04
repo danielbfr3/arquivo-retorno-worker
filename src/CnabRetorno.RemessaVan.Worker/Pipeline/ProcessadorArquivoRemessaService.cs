@@ -8,6 +8,7 @@ namespace CnabRetorno.RemessaVan.Worker.Pipeline;
 public enum ResultadoRemessa
 {
     Ingerido,
+    Duplicado,
     NaoReconhecido,
     IgnoradoNaoEhRemessa,
     Falhou,
@@ -28,6 +29,7 @@ public class ProcessadorArquivoRemessaService(
     CatalogoMascarasVan mascaras,
     NomeArquivoAsa nomeAsa,
     ParametroClienteRepository parametros,
+    IngestaoIdempotenciaRepository idempotencia,
     IArmazenamentoArquivo armazenamento,
     ArquivoRepository arquivos,
     TimeProvider tempo,
@@ -52,6 +54,21 @@ public class ProcessadorArquivoRemessaService(
             return new RemessaProcessada(ResultadoRemessa.IgnoradoNaoEhRemessa);
         }
 
+        var conteudo = await origem.LerAsync(pendente.Caminho, ct);
+
+        // Idempotência por conteúdo, antes de qualquer efeito: a VAN pode
+        // retransmitir o mesmo arquivo (com nome novo, inclusive) dias
+        // depois. O nome não serve de chave — o hash serve.
+        var md5 = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(conteudo));
+        if (await idempotencia.JaIngeridaAsync(md5, ct))
+        {
+            logger.LogWarning(
+                "Arquivo {Nome} (MD5 {Md5}) já foi ingerido antes — movendo pra Backup sem reprocessar",
+                pendente.Nome, md5);
+            origem.MoverParaBackup(pendente.Caminho);
+            return new RemessaProcessada(ResultadoRemessa.Duplicado);
+        }
+
         // Passo 1: o GUID nasce aqui e vale pro storage e pro registro —
         // um id só na cadeia inteira.
         var arquivoId = Guid.NewGuid();
@@ -72,8 +89,6 @@ public class ProcessadorArquivoRemessaService(
             ArquivoId: arquivoId,
             NomeOriginal: pendente.Nome,
             Momento: tempo.GetLocalNow().DateTime));
-
-        var conteudo = await origem.LerAsync(pendente.Caminho, ct);
 
         // Passos 6 e 7: presign + PUT (ou PutObject direto, conforme
         // Storage:Modo).
@@ -98,6 +113,12 @@ public class ProcessadorArquivoRemessaService(
             origem.MoverParaQuarentena(pendente.Caminho);
             return new RemessaProcessada(ResultadoRemessa.Falhou, arquivoId, nomeFinal);
         }
+
+        // Hash gravado por último, depois da ingestão completa: um crash
+        // antes daqui reprocessa (recuperável e visível); a ordem inversa
+        // marcaria como ingerido um arquivo que não foi (perda
+        // silenciosa).
+        await idempotencia.RegistrarAsync(md5, arquivoId, pendente.Nome, ct);
 
         origem.MoverParaBackup(pendente.Caminho);
 

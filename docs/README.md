@@ -38,7 +38,3 @@ Guias funcionais e de referência técnica dos dois robôs
 - [`evoluindo-com-libs-externas.md`](evoluindo-com-libs-externas.md) —
   como trazer libs externas sem reintroduzir camadas desnecessárias.
   Mantido como referência conceitual (ver nota no topo do doc).
-
-Mensageria (AWS SQS) está coberta em `conceitos-dotnet-ef-core.md` §5 e
-implementada em `CnabRetorno.Common/Mensageria/`. Nenhum dos robôs atuais
-consome fila — o suporte fica na biblioteca compartilhada.

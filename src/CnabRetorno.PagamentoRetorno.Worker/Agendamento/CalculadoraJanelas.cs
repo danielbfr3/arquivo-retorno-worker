@@ -26,6 +26,20 @@ public class JanelaOptions
     /// todo dia — deixar de mandar um retorno é pior que mandar um vazio,
     /// e arquivo sem movimentação nem chega a ser gerado.</summary>
     public bool IncluirFinsDeSemana { get; set; } = true;
+
+    /// <summary>
+    /// Em que fuso a base ASA_CASH_PAGAMENTO grava
+    /// <c>DataCriacao</c>/<c>DataAtualizacao</c>?
+    ///
+    /// TODO(a-confirmar): não capturado. <c>false</c> (padrão) assume
+    /// horário local do fuso acima; <c>true</c> assume UTC. Errar isso
+    /// desloca todo corte de janela em 3 horas — o consolidado das 18h
+    /// perderia a tarde inteira. Confirmar com o time dono da base e, se
+    /// for UTC, virar esta chave — nenhuma outra mudança é necessária
+    /// (todo instante comparado com o banco passa por
+    /// <see cref="CalculadoraJanelas.InstanteBanco"/>).
+    /// </summary>
+    public bool TimestampsBancoEmUtc { get; set; }
 }
 
 public enum TipoJanela
@@ -99,6 +113,43 @@ public class CalculadoraJanelas(IOptions<JanelaOptions> opcoes)
 
         return null;
     }
+
+    /// <summary>
+    /// O consolidado imediatamente **anterior** a <paramref name="momento"/> —
+    /// é o piso de toda janela: o "dia útil" deste robô vai de consolidado
+    /// a consolidado (18h→18h por padrão), não de meia-noite a meia-noite.
+    ///
+    /// É o que fecha o buraco pós-18h: um pagamento que finaliza às 18h30
+    /// pertence ao dia útil seguinte e entra na primeira parcial de
+    /// amanhã. Com fins de semana desligados, o consolidado de segunda
+    /// cobre desde sexta 18h (72h) — por isso a varredura anda até 8 dias
+    /// pra trás, igual a <see cref="ProximaApos"/>.
+    /// </summary>
+    public Ocorrencia? ConsolidadoAnterior(DateTimeOffset momento)
+    {
+        var local = TimeZoneInfo.ConvertTime(momento, Fuso);
+
+        for (var salto = 0; salto <= 8; salto++)
+        {
+            var dia = DateOnly.FromDateTime(local.Date).AddDays(-salto);
+            var consolidado = OcorrenciasDoDia(dia)
+                .LastOrDefault(o => o.Tipo == TipoJanela.Consolidado && o.Momento < momento);
+
+            if (consolidado is not null) return consolidado;
+        }
+
+        return null;
+    }
+
+    /// <summary>Converte um instante de janela pro referencial em que a
+    /// base grava os timestamps — ver
+    /// <see cref="JanelaOptions.TimestampsBancoEmUtc"/>. Todo valor
+    /// comparado com <c>DataCriacao</c>/<c>DataAtualizacao</c> passa por
+    /// aqui, nunca por <c>.DateTime</c> direto.</summary>
+    public DateTime InstanteBanco(DateTimeOffset momento)
+        => _opt.TimestampsBancoEmUtc
+            ? momento.UtcDateTime
+            : TimeZoneInfo.ConvertTime(momento, Fuso).DateTime;
 
     private DateTimeOffset EmFuso(DateOnly dia, TimeSpan hora)
     {

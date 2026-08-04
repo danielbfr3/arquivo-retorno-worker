@@ -76,16 +76,44 @@ public class ModeloEfTests
     }
 
     [Fact]
-    public void Controle_de_janela_deve_ter_chave_composta()
+    public void Controle_de_janela_deve_ser_continuo_por_cliente()
     {
+        // A marca d'água NÃO tem dimensão de dia — o dia útil do robô é
+        // consolidado→consolidado, e uma chave por dia de calendário
+        // deixava desfechos pós-18h sem dono.
         using var db = Pagamento();
 
         var controle = db.Model.FindEntityType(typeof(Pagamento.ControleJanelaRetorno))!;
         var chave = controle.FindPrimaryKey();
 
         Assert.NotNull(chave);
-        Assert.Equal(
-            ["ClienteDocumento", "DataReferencia"],
-            chave.Properties.Select(p => p.Name));
+        Assert.Equal(["ClienteDocumento"], chave.Properties.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void Pagamento_reportado_deve_ter_chave_por_pagamento_e_status()
+    {
+        // O par é a chave de propósito: mesmo pagamento com status NOVO
+        // deve poder ser reportado de novo (desfecho novo); com o mesmo
+        // status, a PK barra o reenvio.
+        using var db = Pagamento();
+
+        var reportado = db.Model.FindEntityType(typeof(Pagamento.PagamentoReportado))!;
+        var chave = reportado.FindPrimaryKey();
+
+        Assert.NotNull(chave);
+        Assert.Equal(["PagamentoID", "CodigoStatus"], chave.Properties.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void Remessa_ingerida_deve_ter_o_md5_como_chave()
+    {
+        using var db = Cobranca();
+
+        var ingerida = db.Model.FindEntityType(typeof(Cobranca.RemessaIngerida))!;
+        var chave = ingerida.FindPrimaryKey();
+
+        Assert.NotNull(chave);
+        Assert.Equal(["Md5"], chave.Properties.Select(p => p.Name));
     }
 }

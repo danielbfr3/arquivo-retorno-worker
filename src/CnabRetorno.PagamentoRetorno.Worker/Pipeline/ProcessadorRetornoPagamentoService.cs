@@ -39,7 +39,7 @@ public class ProcessadorRetornoPagamentoService(
     };
 
     public async Task ProcessarAsync(
-        MovimentacoesDoCliente cliente, Ocorrencia janela, DateOnly dia, CancellationToken ct)
+        MovimentacoesDoCliente cliente, Ocorrencia janela, CancellationToken ct)
     {
         var tipoNome = janela.Tipo == TipoJanela.Consolidado
             ? TipoJanelaNome.Consolidado
@@ -71,15 +71,31 @@ public class ProcessadorRetornoPagamentoService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await arquivos.RemoverAsync(arquivoId, ct);
+            // A compensação nunca pode mascarar a exceção original: se o
+            // DELETE também falhar (banco fora do ar — talvez a mesma
+            // causa raiz), loga o órfão e deixa a falha real subir.
+            try
+            {
+                await arquivos.RemoverAsync(arquivoId, ct);
+            }
+            catch (Exception exRemocao) when (exRemocao is not OperationCanceledException)
+            {
+                logger.LogError(exRemocao,
+                    "Compensação falhou — linha {ArquivoId} ficou órfã em Pagamento.Arquivo (status EnviadoParaConversao sem arquivo); remover manualmente",
+                    arquivoId);
+            }
+
             logger.LogError(ex,
-                "Falha ao gerar o retorno do cliente {Documento} na janela {Janela:o} — linha {ArquivoId} removida; o NSA {Nsa} fica consumido",
-                cliente.Documento, janela.Momento, arquivoId, sequencial);
+                "Falha ao gerar o retorno do cliente {Documento} na janela {Janela:o} — o NSA {Nsa} fica consumido",
+                cliente.Documento, janela.Momento, sequencial);
             throw;
         }
 
         // Só depois do arquivo existir de fato. Avançar antes faria uma
-        // falha de conversão descartar as movimentações pra sempre.
-        await controleJanela.RegistrarAsync(cliente.Documento, dia, cliente.UltimoInstante, ct);
+        // falha de conversão descartar as movimentações pra sempre. Grava
+        // junto os pares (PagamentoID, status) reportados — segunda camada
+        // de idempotência do delta.
+        await controleJanela.RegistrarAsync(
+            cliente.Documento, cliente.UltimoInstante, cliente.Movimentacoes, ct);
     }
 }

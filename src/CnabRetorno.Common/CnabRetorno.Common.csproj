@@ -14,15 +14,11 @@
   </ItemGroup>
   <ItemGroup>
     <!--
-      Nenhum dos dois robôs atuais consome fila: o Robô 1 é ingestão pura
-      e o Robô 2 usa o conversor síncrono. O suporte a SQS fica aqui como
-      capacidade da biblioteca compartilhada (é a tecnologia de fila
-      padrão do ecossistema, e todo nome de fila vem de configuração —
-      ver Mensageria/SqsOptions.cs). Trocar de broker significa reescrever
-      só SqsConsumerHostedService.cs; a interface IMessageService<T> não
-      muda.
+      Sem mensageria: nenhum dos dois robôs consome fila — o Robô 1 é
+      ingestão pura e o Robô 2 usa o conversor síncrono. Se um consumidor
+      de fila voltar a existir, ele nasce aqui (Common), com todo nome de
+      fila vindo de configuração, nunca literal em código.
     -->
-    <PackageReference Include="AWSSDK.SQS" Version="4.0.100.5" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />

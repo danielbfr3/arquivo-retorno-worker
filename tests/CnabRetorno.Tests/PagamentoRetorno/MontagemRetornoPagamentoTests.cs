@@ -245,6 +245,68 @@ public class MontagemRetornoPagamentoTests
     }
 
     [Fact]
+    public void Pix_qrcode_deve_carregar_a_chave_no_detalhe()
+    {
+        // Forma 47 cai no lote de segmento J, mas a identidade do PIX não
+        // é código de barras — é a chave. Sem o Favorecido no detalhe, o
+        // retorno sairia sem dizer pra quem o pagamento foi.
+        var json = Montagem().Montar(
+            Cliente(Movimentacao(MeioPagamento.Pix, chavePixUrl: "chave@exemplo.com")),
+            sequencial: 1, Momento);
+
+        var detalhe = json.Lotes.Single(l => l.FormaLancamento == FormaLancamento.PixQrCode).Pagamentos[0];
+
+        Assert.Equal("J", detalhe.Segmento);
+        Assert.NotNull(detalhe.Favorecido);
+        Assert.Equal("chave@exemplo.com", detalhe.Favorecido.ChavePix);
+        Assert.Equal("FAVORECIDO EXEMPLO LTDA", detalhe.Favorecido.Nome);
+    }
+
+    [Fact]
+    public void Boleto_nao_deve_ganhar_favorecido_no_segmento_J()
+    {
+        // O J-52 de boleto usa as mesmas posições da chave PIX pra outra
+        // coisa (pagador final) — só PIX monta Favorecido no lote J.
+        var json = Montagem().Montar(
+            Cliente(Movimentacao(MeioPagamento.Boleto, codigoBanco: "001")),
+            sequencial: 1, Momento);
+
+        Assert.Null(json.Lotes[0].Pagamentos[0].Favorecido);
+    }
+
+    [Fact]
+    public void Titulo_rejeitado_nao_pode_ter_valor_nem_data_de_pagamento()
+    {
+        // Mesma regra do segmento A (P003/P004): num rejeitado, preencher
+        // valor/data de pagamento faria o cliente conciliar uma baixa que
+        // não houve.
+        var json = Montagem().Montar(
+            Cliente(Movimentacao(MeioPagamento.Boleto, codigoBanco: "001",
+                status: (short)StatusPagamento.Rejeitado, valor: 300m)),
+            sequencial: 1, Momento);
+
+        var titulo = json.Lotes[0].Pagamentos[0].Titulo;
+        Assert.NotNull(titulo);
+        Assert.Equal(0m, titulo.ValorPagamento);
+        Assert.Null(titulo.DataPagamento);
+        Assert.Equal(150.75m, titulo.ValorTitulo); // o nominal continua lá
+    }
+
+    [Fact]
+    public void Titulo_finalizado_deve_ter_valor_e_data_de_pagamento()
+    {
+        var json = Montagem().Montar(
+            Cliente(Movimentacao(MeioPagamento.Boleto, codigoBanco: "001",
+                status: (short)StatusPagamento.Finalizado, valor: 300m)),
+            sequencial: 1, Momento);
+
+        var titulo = json.Lotes[0].Pagamentos[0].Titulo;
+        Assert.NotNull(titulo);
+        Assert.Equal(300m, titulo.ValorPagamento);
+        Assert.Equal("2026-08-03", titulo.DataPagamento);
+    }
+
+    [Fact]
     public void Linhas_da_remessa_devem_prevalecer_sobre_as_colunas()
     {
         // O cliente concilia contra o que ele mandou; a coluna pode ter

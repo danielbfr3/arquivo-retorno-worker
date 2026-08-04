@@ -160,13 +160,45 @@ public class MontagemRetornoPagamento(IOptions<RetornoOptions> opcoes)
             NossoNumero = m.NossoNumero ?? m.CodigoAutenticacao,
         };
 
-        return segmento == 'J'
-            ? comum with { Titulo = MontarTitulo(m, remessa) }
-            : comum with
+        if (segmento != 'J')
+            return comum with
             {
                 Favorecido = MontarFavorecido(m, remessa),
                 Credito = MontarCredito(m, remessa),
             };
+
+        // PIX QR-Code cai no lote de segmento J (forma 47), mas a
+        // identidade dele não é código de barras — é a chave/URL do
+        // J-52 PIX. Sem o Favorecido aqui, a chave se perderia e o
+        // retorno sairia sem dizer PRA QUEM o pagamento foi.
+        var favorecidoPix = (MeioPagamento)m.Meio == MeioPagamento.Pix
+            ? MontarFavorecidoPix(m, remessa)
+            : null;
+
+        return comum with
+        {
+            Titulo = MontarTitulo(m, remessa),
+            Favorecido = favorecidoPix,
+        };
+    }
+
+    /// <summary>Identidade do favorecido de um PIX QR-Code. A chave vem
+    /// do J-52 PIX da remessa (posições 132-210) quando gravado — nunca
+    /// do J-52 comum de boleto, cujas mesmas posições são o pagador
+    /// final —, senão da coluna <c>ChavePixUrl</c>.</summary>
+    private static FavorecidoPagamento MontarFavorecidoPix(MovimentacaoPagamento m, SegmentosRemessa remessa)
+    {
+        var chaveDaRemessa = remessa.J52 is not null
+            ? Cnab240Pagamento.SegmentoJ52.ChavePix(remessa.J52)
+            : null;
+
+        return new FavorecidoPagamento
+        {
+            Nome = m.FavorecidoNome,
+            TipoInscricao = m.FavorecidoTipoDocumento?.ToString(),
+            NumeroInscricao = m.FavorecidoDocumento,
+            ChavePix = string.IsNullOrWhiteSpace(chaveDaRemessa) ? m.ChavePixUrl : chaveDaRemessa,
+        };
     }
 
     private static FavorecidoPagamento MontarFavorecido(MovimentacaoPagamento m, SegmentosRemessa remessa)
@@ -223,6 +255,11 @@ public class MontagemRetornoPagamento(IOptions<RetornoOptions> opcoes)
         var j52 = remessa.J52;
         var desfecho = m.DataAtualizacao ?? m.DataCriacao;
 
+        // Mesma regra do segmento A (P003/P004): data e valor de
+        // pagamento só existem se o pagamento aconteceu. Num rejeitado,
+        // preenchê-los faria o cliente conciliar uma baixa que não houve.
+        var efetivado = m.CodigoStatus == (short)StatusPagamento.Finalizado;
+
         return new TituloPagamento
         {
             CodigoBarras = j is null ? m.CodigoBarra : Cnab240Pagamento.SegmentoJ.CodigoBarras(j),
@@ -239,8 +276,8 @@ public class MontagemRetornoPagamento(IOptions<RetornoOptions> opcoes)
             ValorTitulo = j is null ? m.ValorNominal ?? 0m : Cnab240Pagamento.SegmentoJ.ValorTitulo(j),
             ValorDesconto = j is null ? m.ValorAbatimento ?? 0m : Cnab240Pagamento.SegmentoJ.ValorDesconto(j),
             ValorAcrescimos = j is null ? 0m : Cnab240Pagamento.SegmentoJ.ValorAcrescimos(j),
-            DataPagamento = desfecho.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            ValorPagamento = m.ValorPagamento,
+            DataPagamento = efetivado ? desfecho.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null,
+            ValorPagamento = efetivado ? m.ValorPagamento : 0m,
             CodigoMoeda = j is null ? "09" : Cnab240Pagamento.SegmentoJ.CodigoMoeda(j), // 09 = Real
         };
     }

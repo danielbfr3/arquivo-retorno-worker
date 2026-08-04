@@ -2,7 +2,7 @@
 
 Dois robôs independentes, sem comunicação entre si. Compartilham o
 `CnabRetorno.Core` (domínio e contratos) e o `CnabRetorno.Common`
-(infraestrutura HTTP, storage e mensageria), e nada mais.
+(infraestrutura HTTP e storage), e nada mais.
 
 | | Robô 1 | Robô 2 |
 |---|---|---|
@@ -26,7 +26,9 @@ flowchart TD
     B -- não --> Q[Move pra Quarentena]
     B -- sim --> C{É remessa?}
     C -- não --> I[Move pra Ignorados]
-    C -- sim --> D[Gera o ArquivoID GUID]
+    C -- sim --> M{MD5 já ingerido?}
+    M -- sim --> K
+    M -- não --> D[Gera o ArquivoID GUID]
     D --> E[Extrai o CNPJ do nome do arquivo]
     E --> F[Busca ContaHeader em Cobranca.Parametro]
     F --> G[Renderiza o nome no padrão ASA]
@@ -50,6 +52,8 @@ flowchart TD
 | ContaHeader | Sai de `Cobranca.Parametro` pelo `Documento`. Ausência **não** barra a ingestão: a coluna é anulável no destino, e travar aqui deixaria a remessa parada na pasta. Loga aviso. | `Persistencia/ParametroClienteRepository.cs` |
 | Nome ASA | Template configurável. Tokens: `{documento}`, `{contaHeader}`, `{van}`, `{guid}`, `{original}`, `{ext}`, `{data:<formato>}`. Caracteres inválidos de nome de arquivo são removidos — os valores vêm de dado externo. | `Vans/NomeArquivoAsa.cs` |
 | Storage | Duas implementações, escolhidas por `Storage:Modo`. Padrão `GestorArquivos` (presigned URL); `S3` grava direto via `PutObject`. | `Storage/S3Storage.cs`, `Common/Storage/GestorArquivoStorage.cs` |
+| Idempotência | **MD5 do conteúdo, em banco** (`Cobranca.ControleIngestaoVan` — DDL em `deploy/cobranca-controle-ingestao-van.sql`). O nome não serve de chave: a VAN pode retransmitir o mesmo conteúdo com nome novo dias depois. O hash é gravado **depois** da ingestão completa — crash no meio reprocessa (visível), nunca marca como ingerido o que não foi (silencioso). | `Persistencia/IngestaoIdempotenciaRepository.cs` |
+| Movimentação de arquivo | Backup/Quarentena/Ignorados **nunca sobrescrevem**: homônimo ganha sufixo de timestamp. Na quarentena, sobrescrever seria perder justamente a evidência do problema. | `Origem/PastaOrigemRemessa.cs` |
 | Registro | Falha **depois** do upload → quarentena, não backup. O objeto já está no bucket sem linha no banco; mandar pra backup faria o arquivo sumir da vista, e deixar na origem faria o próximo ciclo gravar um segundo objeto com GUID novo. O log carrega a referência do órfão. | `Pipeline/ProcessadorArquivoRemessaService.cs` |
 
 ### Não converte
@@ -66,8 +70,8 @@ responsabilidade de outro worker do ecossistema, que parte do registro em
 ```mermaid
 flowchart TD
     A[Acorda na próxima janela] --> B{Parcial ou consolidado?}
-    B -- parcial --> C[Movimentações do dia,<br/>recortadas pela marca d'água<br/>de cada cliente]
-    B -- consolidado --> D[Dia inteiro, todos os clientes]
+    B -- parcial --> C[Movimentações do dia útil,<br/>recortadas pela marca d'água<br/>e pelos pares já reportados]
+    B -- consolidado --> D[Dia útil inteiro<br/>consolidado anterior → agora]
     C --> E[Agrupa por cliente]
     D --> E
     E --> F[Reserva o NSA<br/>UPDATE OUTPUT atômico]
@@ -89,7 +93,9 @@ flowchart TD
 | Padrão | 07h às 18h, de hora em hora: 11 parciais (07h–17h) + 1 consolidado (18h). |
 | Fim fora da grade | Se `HoraFim` não cai certinho no espaçamento, ele acontece assim mesmo — é o fechamento do dia. |
 | Fuso | `America/Sao_Paulo` por padrão. Sem isso, um pod em UTC geraria o "arquivo das 7h" às 4h da manhã. |
-| Restart | Não recupera janela perdida. Não precisa: a marca d'água é por cliente, então o parcial seguinte leva o que ficou pra trás. |
+| **Dia útil** | Vai de **consolidado a consolidado** (18h→18h por padrão), não de meia-noite a meia-noite. É o que fecha o buraco pós-18h: um desfecho às 18h30 pertence ao dia útil seguinte e entra na primeira parcial de amanhã. Com fins de semana desligados, o consolidado de segunda cobre desde sexta 18h (72h). |
+| Fuso do banco | `Janela:TimestampsBancoEmUtc` diz em que referencial a base grava `DataCriacao`/`DataAtualizacao` — `false` (padrão) = horário local, `true` = UTC. **TODO(a-confirmar)**: errar isso desloca todo corte em 3 horas. |
+| Restart | Não recupera janela perdida. Não precisa: a marca d'água é por cliente, então o parcial seguinte leva o que ficou pra trás — inclusive o resíduo da noite anterior, pelo dia útil 18h→18h. |
 
 ### O que entra no arquivo
 
@@ -105,18 +111,28 @@ que pode ser dias antes de ele acontecer.
 
 ### Delta e marca d'água
 
-O parcial é **delta**; o consolidado é o dia inteiro.
+O parcial é **delta**; o consolidado é o dia útil inteiro (do consolidado
+anterior até agora).
 
-A marca d'água (`Pagamento.ControleJanelaRetorno`, tabela nova — DDL em
-[`deploy/pagamento-controle-janela.sql`](../deploy/pagamento-controle-janela.sql))
-guarda, por cliente e dia, o **maior instante de desfecho efetivamente
-incluído** num arquivo — e não o horário da janela. A diferença importa:
-uma movimentação com desfecho às 8h05 que só é gravada no banco às 8h20
-ficaria de fora pra sempre se o corte fosse "8h30".
+O delta tem **duas camadas de idempotência**, ambas em banco (DDL em
+[`deploy/pagamento-controle-janela.sql`](../deploy/pagamento-controle-janela.sql)):
+
+1. **Marca d'água** (`Pagamento.ControleJanelaRetorno`) — por cliente,
+   **contínua, sem dimensão de dia** (uma marca por dia de calendário
+   recriava o buraco pós-18h). Guarda o **maior instante de desfecho
+   efetivamente incluído** num arquivo — e não o horário da janela: uma
+   movimentação com desfecho às 8h05 que só é gravada no banco às 8h20
+   ficaria de fora pra sempre se o corte fosse "8h30".
+2. **Pares reportados** (`Pagamento.ControlePagamentoReportado`) —
+   (PagamentoID, CodigoStatus) já enviados. Barra o que a marca não pega:
+   um UPDATE qualquer na linha do pagamento avança `DataAtualizacao` e o
+   traria de volta no delta com o mesmo status de antes. Status **novo**
+   passa — é desfecho novo de verdade, e reportar é correto. O consolidado
+   ignora esta tabela: repete o dia útil por design.
 
 Por ser por cliente, o recorte não pode ser um intervalo único na
 consulta: um cliente pode ter falhado na janela anterior enquanto os
-outros passaram. Busca-se o dia todo e corta-se cliente a cliente.
+outros passaram. Busca-se o dia útil todo e corta-se cliente a cliente.
 
 Em banco, e não em memória: um restart no meio do expediente com o
 controle em memória faria o parcial seguinte reenviar movimentações que o
@@ -214,16 +230,20 @@ Um NSA reservado por um arquivo que depois falha fica **consumido** (buraco
 na série). É o lado certo do trade-off: repetir um número é pior que pular
 um.
 
----
+A reserva é ADO puro (`DbCommand`), não `SqlQuery<T>`: o EF embrulha o SQL
+do `SqlQuery` num subselect, e `UPDATE ... OUTPUT` não é válido como
+subquery — estouraria só em runtime, no cluster.
 
-## Filas
+### Concorrência entre réplicas
 
-Nenhum dos dois robôs consome fila hoje — o Robô 1 é ingestão pura e o
-Robô 2 usa o conversor síncrono. O suporte a SQS continua no
-`CnabRetorno.Common` como capacidade da biblioteca compartilhada, e **todo
-nome de fila vem de configuração** (`Sqs:Filas:<Apelido>` no appsettings,
-sobrescrito por `Sqs__Filas__<Apelido>` como variável de ambiente). Nunca
-literal em código.
+Cada execução (varredura do Robô 1, janela do Robô 2) roda sob um lock
+aplicativo do SQL Server (`sp_getapplock`, dono = sessão) — o banco é o
+único ponto que todas as réplicas já compartilham. A réplica que não
+consegue o lock **pula** a execução (timeout 0) em vez de enfileirar e
+repetir tudo logo depois; o lock morre com a sessão, então um pod que cai
+no meio libera sozinho. Sem isso, duas réplicas do Robô 2 gerariam dois
+arquivos por cliente com NSAs diferentes — pior que um erro visível,
+porque os dois pareceriam legítimos.
 
 ---
 
@@ -241,6 +261,8 @@ homologação:
 | `CodigoOcorrencia` é FEBRABAN mesmo? | `Core/Dominio/StatusPagamento.cs` | Se for código interno de mesma largura, o cliente recebe código inválido. |
 | Padrão ASA de nomenclatura | `Vans/NomenclaturaOptions.cs` | Default é o espelho da convenção de retorno do próprio ASA. |
 | Coluna de conta em `Cobranca.Parametro` | `Persistencia/CobrancaDbContext.cs` | Nome real não capturado. |
+| Fuso dos timestamps de ASA_CASH_PAGAMENTO | `Agendamento/CalculadoraJanelas.cs` (`Janela:TimestampsBancoEmUtc`) | Errado = todo corte de janela deslocado 3h. Uma chave de configuração corrige. |
+| Permissão pra criar `Cobranca.ControleIngestaoVan` | `deploy/cobranca-controle-ingestao-van.sql` | Tabela nova em schema de outro time — confirmar (ou usar schema próprio). |
 | Código do banco, nome, Tipo de Serviço (G025) | `Json/RetornoOptions.cs` | Header do arquivo sai errado. |
 
 Ver [`riscos-conhecidos.md`](riscos-conhecidos.md) pros riscos de

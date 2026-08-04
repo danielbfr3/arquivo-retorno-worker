@@ -9,7 +9,7 @@ Dois workers .NET 10, independentes entre si:
 
 Os dois não conversam. Compartilham `CnabRetorno.Core` (domínio e
 contratos, zero dependência externa) e `CnabRetorno.Common`
-(infraestrutura: HTTP, storage, mensageria).
+(infraestrutura: HTTP e storage).
 
 ## Estrutura
 
@@ -22,7 +22,6 @@ src/
   CnabRetorno.Common/               infra compartilhada
     Http/                           base HTTP + client do Gestor de Arquivos
     Storage/                        upload via presigned URL
-    Mensageria/                     SQS (não usado hoje — ver "Filas")
   CnabRetorno.RemessaVan.Worker/    Robô 1
     Vans/                           máscaras das VANs, nome padrão ASA
     Origem/                         pasta de entrada, backup, quarentena
@@ -50,7 +49,7 @@ dotnet run --project src/CnabRetorno.RemessaVan.Worker
 dotnet run --project src/CnabRetorno.PagamentoRetorno.Worker
 ```
 
-Não há SQL Server, SQS nem as APIs externas neste ambiente — a verificação
+Não há SQL Server nem as APIs externas neste ambiente — a verificação
 possível é build + testes de unidade. Os testes cobrem as partes puras
 (máscaras, nomenclatura, grade de janelas, montagem do JSON, parse do CNAB
 gravado) e a construção do modelo EF, que valida o mapeamento sem abrir
@@ -59,9 +58,9 @@ conexão.
 ## Configuração
 
 Tudo que é nome de recurso de infra é configuração — pasta de origem,
-bucket, prefixo, filas, base URLs, AppIDs, templates de nome, horários.
-Nada literal em código. Em cluster, sobrescrever por variável de ambiente
-com `__` no lugar de `:` (ex.: `Sqs__Filas__ConversorValido`).
+bucket, prefixo, base URLs, AppIDs, templates de nome, horários. Nada
+literal em código. Em cluster, sobrescrever por variável de ambiente com
+`__` no lugar de `:` (ex.: `Storage__S3__Bucket`).
 
 ### Robô 1 — o essencial
 
@@ -81,16 +80,10 @@ com `__` no lugar de `:` (ex.: `Sqs__Filas__ConversorValido`).
 |---|---|
 | `Janela:HoraInicio` / `HoraFim` / `IntervaloParcial` | Grade de geração |
 | `Janela:FusoHorario` | Sem isso, o "arquivo das 7h" sai às 4h num pod em UTC |
+| `Janela:TimestampsBancoEmUtc` | Em que fuso a base grava os timestamps (**em aberto** — errado desloca o corte em 3h) |
 | `Conversao:Pipeline` | Pipeline do conversor (**em aberto**) |
 | `Retorno:CodigoBanco` / `TipoServico` | Header do arquivo |
 | `ConnectionStrings:Pagamento` | ASA_CASH_PAGAMENTO |
-
-## Filas
-
-Nenhum dos dois robôs consome fila hoje: o Robô 1 é ingestão pura e o Robô
-2 usa o conversor síncrono. O suporte a SQS fica no `CnabRetorno.Common`
-como capacidade da biblioteca, com todo nome de fila resolvido por
-configuração.
 
 ## Antes de homologação
 
@@ -108,6 +101,8 @@ mais críticos:
 - **Valores numéricos de `ArquivoStatus`/`ArquivoEtapa`** — os nomes são
   reais, os números são suposição, e a tabela é compartilhada com o
   ecossistema CASH inteiro.
+- **Fuso dos timestamps de `ASA_CASH_PAGAMENTO`** — `Janela:TimestampsBancoEmUtc`
+  corrige com uma chave, mas precisa da resposta do time dono da base.
 
 ## Documentação
 

@@ -8,6 +8,16 @@ errado.
 É processamento bancário — um arquivo entregue ao cliente não tem
 desfazer. Cada item diz o cenário concreto, o impacto e a decisão tomada.
 
+**Corrigidos na rodada de 03/08/2026** (mantidos fora da lista): buraco
+pós-18h (dia útil virou consolidado→consolidado), PIX QR-Code sem chave
+no detalhe, título rejeitado com valor de pagamento preenchido,
+re-report por UPDATE sem mudança de status (pares reportados), ausência
+de idempotência por conteúdo no Robô 1 (MD5 em banco), réplicas
+concorrentes (lock `sp_getapplock`), sobrescrita na quarentena (sufixo de
+timestamp), compensação mascarando a exceção original, e `SqlQuery` com
+`UPDATE...OUTPUT` (trocado por ADO puro — o embrulho em subselect do EF
+estouraria em runtime).
+
 ---
 
 ## 1. Valores numéricos de `ArquivoStatus` / `ArquivoEtapa` são suposição
@@ -101,16 +111,19 @@ esse número justamente pra detectar arquivo repetido.
 
 ## 6. Marca d'água avançada com o arquivo já entregue
 
-A marca d'água é atualizada **depois** de o arquivo existir. Se o processo
-morrer entre "marcar Registrado" e "avançar a marca", o próximo parcial
-reenvia as mesmas movimentações.
+A marca d'água e os pares reportados são atualizados **depois** de o
+arquivo existir. Se o processo morrer entre "marcar Registrado" e o
+registro do controle, o próximo parcial reenvia as mesmas movimentações.
 
 **Cenário:** pod reiniciado no instante exato. O cliente recebe as mesmas
 movimentações em dois arquivos parciais consecutivos.
 
 **Decisão:** deliberado, nessa ordem. Duplicar é recuperável (o cliente
-concilia por `SeuNumero`); perder não. A ordem inversa (marca antes do
+concilia por `SeuNumero`); perder não. A ordem inversa (controle antes do
 arquivo) faria uma falha de conversão descartar movimentações pra sempre.
+A janela dessa corrida é de milissegundos — e os pares reportados
+reduziram o caso mais provável de reenvio (UPDATE sem mudança de status)
+a não-evento.
 
 ---
 
@@ -147,13 +160,15 @@ existe. Coberto por teste (`Sem_linhas_deve_cair_nas_colunas`).
 Se o worker estiver fora do ar às 9h, o parcial das 9h não acontece e não
 é gerado depois.
 
-**Impacto:** baixo por desenho — a marca d'água é por cliente, então o
-parcial das 10h leva tudo que ficou pra trás. O que se perde é a
-granularidade horária, não o dado.
+**Impacto:** baixo por desenho — a marca d'água é contínua por cliente,
+então o parcial seguinte leva tudo que ficou pra trás, inclusive através
+da virada do dia útil (18h→18h).
 
 **Exceção:** se o worker ficar fora do ar **das 17h às 18h01**, o
-consolidado do dia não sai. Aí é perda real, e precisa de reexecução
-manual.
+consolidado do dia não sai — e o consolidado do dia seguinte **não** o
+substitui (cobre outro dia útil). As movimentações não se perdem (vão nas
+parciais seguintes), mas o arquivo de fechamento daquele dia precisa de
+reexecução manual.
 
 ---
 
@@ -199,4 +214,7 @@ aparece em runtime. O teste de modelo EF pega mapeamento inconsistente,
 mas não valida que as colunas existem no banco.
 
 **Mitigação:** primeiro teste em homologação deve ser uma janela com
-`Janela:IntervaloParcial` curto e a base real, olhando o log.
+`Janela:IntervaloParcial` curto e a base real, olhando o log. Os pontos
+de maior atenção nesse primeiro contato: o `UNION ALL` das cinco duplas,
+a reserva de NSA e o `sp_getapplock` (os três em SQL/ADO cru, sem teste
+de integração).

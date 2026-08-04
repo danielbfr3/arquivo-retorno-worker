@@ -3,20 +3,40 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CnabRetorno.PagamentoRetorno.Worker.Persistencia;
 
-/// <summary>Marca d'água por cliente e dia — até onde o último arquivo
-/// parcial já reportou. Tabela **nova**, exclusiva deste worker (ver
-/// deploy/pagamento-controle-janela.sql).</summary>
+/// <summary>Marca d'água por cliente — até onde o último arquivo parcial
+/// já reportou. Tabela **nova**, exclusiva deste worker (ver
+/// deploy/pagamento-controle-janela.sql).
+///
+/// **Contínua, sem dimensão de dia** — de propósito: o "dia útil" deste
+/// robô vai de consolidado a consolidado (18h→18h), e uma marca por dia
+/// de calendário recriava o buraco pós-18h (desfecho às 18h30 não
+/// pertencia a dia nenhum).</summary>
 public class ControleJanelaRetorno
 {
     public string ClienteDocumento { get; set; } = default!;
-    public DateOnly DataReferencia { get; set; }
 
     /// <summary>Maior instante de desfecho já incluído num arquivo deste
-    /// cliente no dia. O próximo parcial pega o que for estritamente
+    /// cliente. O próximo parcial pega o que for estritamente
     /// posterior.</summary>
     public DateTime UltimoInstanteReportado { get; set; }
 
     public DateTime DataAtualizacao { get; set; }
+}
+
+/// <summary>Par (pagamento, status) já reportado num arquivo **parcial**.
+/// Segunda camada de idempotência, complementar à marca d'água: qualquer
+/// UPDATE na linha do pagamento avança <c>DataAtualizacao</c> e o faria
+/// reaparecer no delta seguinte com cara de movimentação nova — este
+/// registro barra o reenvio quando o status não mudou, e deixa passar
+/// quando mudou (aí é desfecho novo de verdade, e reportar é correto).
+///
+/// O consolidado ignora esta tabela: ele repete o dia útil inteiro por
+/// design.</summary>
+public class PagamentoReportado
+{
+    public Guid PagamentoID { get; set; }
+    public short CodigoStatus { get; set; }
+    public DateTime DataCriacao { get; set; }
 }
 
 /// <summary>Projeção só-leitura de <c>Pagamento.Parametro</c> — a linha por
@@ -45,6 +65,7 @@ public class PagamentoDbContext(DbContextOptions<PagamentoDbContext> options) : 
     public DbSet<Arquivo> Arquivos => Set<Arquivo>();
     public DbSet<ParametroPagamento> Parametros => Set<ParametroPagamento>();
     public DbSet<ControleJanelaRetorno> ControleJanelas => Set<ControleJanelaRetorno>();
+    public DbSet<PagamentoReportado> Reportados => Set<PagamentoReportado>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         => optionsBuilder.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
@@ -93,11 +114,19 @@ public class PagamentoDbContext(DbContextOptions<PagamentoDbContext> options) : 
         mb.Entity<ControleJanelaRetorno>(e =>
         {
             e.ToTable("ControleJanelaRetorno", schema: "Pagamento");
-            e.HasKey(c => new { c.ClienteDocumento, c.DataReferencia });
+            e.HasKey(c => c.ClienteDocumento);
             e.Property(c => c.ClienteDocumento).HasColumnName("ClienteDocumento").HasMaxLength(20);
-            e.Property(c => c.DataReferencia).HasColumnName("DataReferencia");
             e.Property(c => c.UltimoInstanteReportado).HasColumnName("UltimoInstanteReportado");
             e.Property(c => c.DataAtualizacao).HasColumnName("DataAtualizacao");
+        });
+
+        mb.Entity<PagamentoReportado>(e =>
+        {
+            e.ToTable("ControlePagamentoReportado", schema: "Pagamento");
+            e.HasKey(r => new { r.PagamentoID, r.CodigoStatus });
+            e.Property(r => r.PagamentoID).HasColumnName("PagamentoID");
+            e.Property(r => r.CodigoStatus).HasColumnName("CodigoStatus");
+            e.Property(r => r.DataCriacao).HasColumnName("DataCriacao");
         });
     }
 

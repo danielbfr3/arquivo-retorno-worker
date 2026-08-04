@@ -6,8 +6,6 @@
 # Azure SQL Edge em vez do SQL Server "real" pra funcionar em ARM64
 # (Apple Silicon); mesmo protocolo T-SQL.
 #
-# Sem broker local: nenhum dos dois robôs consome fila hoje.
-#
 # As APIs externas (Gestor de Arquivos e conversor de layout) não têm
 # emulação local — apontam pro ambiente de homologação real, e as base
 # URLs em appsettings.json ainda estão como TODO(a-confirmar).

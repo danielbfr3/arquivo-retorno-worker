@@ -196,15 +196,25 @@ prevalece sobre o mapeamento por status.
 
 ---
 
-## 4. Tabela criada por este projeto
+## 4. Tabelas criadas por este projeto
 
-`Pagamento.ControleJanelaRetorno` — a marca d'água dos arquivos parciais.
-É a **única** tabela que este repositório cria; todas as outras pertencem
-a outros times. DDL em
-[`deploy/pagamento-controle-janela.sql`](../deploy/pagamento-controle-janela.sql).
+Duas nesta base — DDL em
+[`deploy/pagamento-controle-janela.sql`](../deploy/pagamento-controle-janela.sql):
+
+- `Pagamento.ControleJanelaRetorno` — marca d'água **contínua por
+  cliente** (sem dimensão de dia: o dia útil do robô é
+  consolidado→consolidado, 18h→18h).
+- `Pagamento.ControlePagamentoReportado` — pares (PagamentoID,
+  CodigoStatus) já enviados em parciais; barra o reenvio causado por
+  UPDATE sem mudança de status. Sem limpeza automática ainda
+  (`TODO(a-confirmar)`: política de retenção).
 
 O mesmo script adiciona `SequencialAtual` a `Pagamento.Parametro`, espelho
 do que já existe em `Cobranca.Parametro`.
+
+Na base de cobrança, o Robô 1 cria `Cobranca.ControleIngestaoVan`
+(idempotência por MD5 — DDL em
+[`deploy/cobranca-controle-ingestao-van.sql`](../deploy/cobranca-controle-ingestao-van.sql)).
 
 ---
 

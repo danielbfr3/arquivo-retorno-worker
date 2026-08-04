@@ -111,6 +111,73 @@ public class CalculadoraJanelasTests
     }
 
     [Fact]
+    public void Consolidado_anterior_deve_ser_o_das_18h_de_ontem()
+    {
+        // Às 8h de segunda, o dia útil começou no consolidado de domingo
+        // 18h — é o piso de todas as janelas de hoje.
+        var anterior = Com().ConsolidadoAnterior(
+            new DateTimeOffset(2026, 8, 3, 8, 0, 0, TimeSpan.FromHours(-3)));
+
+        Assert.NotNull(anterior);
+        Assert.Equal(TipoJanela.Consolidado, anterior.Tipo);
+        Assert.Equal(2, anterior.Momento.Day);
+        Assert.Equal(18, anterior.Momento.Hour);
+    }
+
+    [Fact]
+    public void Consolidado_anterior_no_instante_exato_do_consolidado_deve_ser_o_de_ontem()
+    {
+        // Estritamente anterior: às 18h em ponto, o "anterior" é o de
+        // ontem — o de agora é a própria janela sendo executada, e usá-lo
+        // como piso zeraria o período do consolidado.
+        var anterior = Com().ConsolidadoAnterior(
+            new DateTimeOffset(2026, 8, 3, 18, 0, 0, TimeSpan.FromHours(-3)));
+
+        Assert.NotNull(anterior);
+        Assert.Equal(2, anterior.Momento.Day);
+    }
+
+    [Fact]
+    public void Consolidado_anterior_com_fins_de_semana_desligados_deve_pular_pra_sexta()
+    {
+        // Segunda 10/08 de manhã, fins de semana off: o consolidado
+        // anterior é o de sexta 07/08 18h — o dia útil de segunda cobre
+        // 72 horas, e é isso que garante que o fim de semana não vira
+        // buraco.
+        var anterior = Com(finsDeSemana: false).ConsolidadoAnterior(
+            new DateTimeOffset(2026, 8, 10, 8, 0, 0, TimeSpan.FromHours(-3)));
+
+        Assert.NotNull(anterior);
+        Assert.Equal(DayOfWeek.Friday, anterior.Momento.DayOfWeek);
+        Assert.Equal(7, anterior.Momento.Day);
+        Assert.Equal(18, anterior.Momento.Hour);
+    }
+
+    [Fact]
+    public void Instante_banco_padrao_deve_ser_horario_local_de_parede()
+    {
+        var calculadora = Com();
+        var momento = new DateTimeOffset(2026, 8, 3, 18, 0, 0, TimeSpan.FromHours(-3));
+
+        Assert.Equal(new DateTime(2026, 8, 3, 18, 0, 0), calculadora.InstanteBanco(momento));
+    }
+
+    [Fact]
+    public void Instante_banco_em_utc_deve_deslocar_tres_horas()
+    {
+        // A chave que corrige o corte inteiro se a base gravar UTC — ver
+        // JanelaOptions.TimestampsBancoEmUtc.
+        var calculadora = new CalculadoraJanelas(Options.Create(new JanelaOptions
+        {
+            FusoHorario = "America/Sao_Paulo",
+            TimestampsBancoEmUtc = true,
+        }));
+        var momento = new DateTimeOffset(2026, 8, 3, 18, 0, 0, TimeSpan.FromHours(-3));
+
+        Assert.Equal(new DateTime(2026, 8, 3, 21, 0, 0), calculadora.InstanteBanco(momento));
+    }
+
+    [Fact]
     public void Fim_anterior_ao_inicio_deve_falhar_no_calculo()
         => Assert.Throws<InvalidOperationException>(
             () => Com(inicio: "18:00", fim: "07:00").OcorrenciasDoDia(Segunda));

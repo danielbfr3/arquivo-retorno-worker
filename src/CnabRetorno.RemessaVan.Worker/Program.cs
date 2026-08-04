@@ -34,6 +34,7 @@ builder.Services.AddDbContext<CobrancaDbContext>(opt =>
     opt.UseSqlServer(builder.Configuration.GetConnectionString("Cobranca")));
 builder.Services.AddScoped<ArquivoRepository>();
 builder.Services.AddScoped<ParametroClienteRepository>();
+builder.Services.AddScoped<IngestaoIdempotenciaRepository>();
 
 // Pasta de origem (compartilhamento SMB em produção) e máscaras das VANs.
 builder.Services.AddScoped<PastaOrigemRemessa>();

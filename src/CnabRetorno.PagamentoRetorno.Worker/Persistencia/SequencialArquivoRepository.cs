@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace CnabRetorno.PagamentoRetorno.Worker.Persistencia;
@@ -31,6 +32,12 @@ public class SequencialArquivoRepository(PagamentoDbContext db)
     /// worker, ou dois clientes processados em paralelo) nunca recebem o
     /// mesmo número — o que um <c>SELECT</c> seguido de <c>UPDATE</c> não
     /// garantiria.
+    ///
+    /// Em ADO puro (DbCommand), e não <c>SqlQuery&lt;T&gt;</c>, de
+    /// propósito: o EF embrulha o SQL do <c>SqlQuery</c> num subselect
+    /// (<c>SELECT ... FROM (&lt;sql&gt;)</c>), e <c>UPDATE ... OUTPUT</c>
+    /// não é válido como subquery — o embrulho estouraria só em runtime,
+    /// no cluster, já que nada aqui roda contra banco real nos testes.
     /// </summary>
     /// <exception cref="SequencialIndisponivelException">
     /// Nenhuma (ou mais de uma) linha em <c>Pagamento.Parametro</c> pro
@@ -38,20 +45,38 @@ public class SequencialArquivoRepository(PagamentoDbContext db)
     /// </exception>
     public async Task<long> ReservarProximoAsync(string documento, CancellationToken ct)
     {
-        // "AS Value" é exigência do SqlQuery<T> do EF Core pra tipo
-        // escalar — a coluna do resultado precisa se chamar Value.
-        var sequenciais = await db.Database
-            .SqlQuery<long>($"""
+        var conexao = db.Database.GetDbConnection();
+        var manterAberta = conexao.State == ConnectionState.Open;
+        if (!manterAberta) await db.Database.OpenConnectionAsync(ct);
+
+        try
+        {
+            await using var comando = conexao.CreateCommand();
+            comando.CommandText = """
                 UPDATE Pagamento.Parametro
                 SET SequencialAtual = SequencialAtual + 1
-                OUTPUT INSERTED.SequencialAtual AS Value
-                WHERE Documento = {documento}
-                """)
-            .ToListAsync(ct);
+                OUTPUT INSERTED.SequencialAtual
+                WHERE Documento = @documento
+                """;
 
-        if (sequenciais.Count != 1)
-            throw new SequencialIndisponivelException(documento, sequenciais.Count);
+            var parametro = comando.CreateParameter();
+            parametro.ParameterName = "@documento";
+            parametro.Value = documento;
+            comando.Parameters.Add(parametro);
 
-        return sequenciais[0];
+            var sequenciais = new List<long>();
+            await using var leitor = await comando.ExecuteReaderAsync(ct);
+            while (await leitor.ReadAsync(ct))
+                sequenciais.Add(leitor.GetInt64(0));
+
+            if (sequenciais.Count != 1)
+                throw new SequencialIndisponivelException(documento, sequenciais.Count);
+
+            return sequenciais[0];
+        }
+        finally
+        {
+            if (!manterAberta) await db.Database.CloseConnectionAsync();
+        }
     }
 }

@@ -86,7 +86,7 @@ reproduzir em dev (só aparece sob concorrência real). Regra usada:
 
 | Ciclo de vida | Quando usar aqui | Exemplo |
 |---|---|---|
-| **Singleton** | Recurso caro de criar, seguro pra compartilhar entre requisições/tasks concorrentes | `IAmazonSQS` (`ServiceCollectionExtensions.AddCnabSqsConnection` — client caro de abrir, deve viver o processo inteiro) |
+| **Singleton** | Recurso caro de criar (ou imutável), seguro pra compartilhar entre tasks concorrentes | `CatalogoMascarasVan` (regex compilada uma vez), `IAmazonS3` no modo S3 do Robô 1 (client caro de abrir, deve viver o processo inteiro) |
 | **Scoped** | Recurso barato de criar, **não thread-safe**, deve ter uma instância por "unidade de trabalho" | `CobrancaDbContext`, todos os serviços de aplicação |
 | **Transient** | Sem estado nenhum entre chamadas — raro neste projeto especificamente | — |
 
@@ -140,16 +140,14 @@ builder.Services.AddHostedService<RemessaVanWorker>();
 
 `PagamentoRetornoWorker` é a mesma ideia com outro gatilho: em vez de uma
 expressão cron, um laço que pergunta à `CalculadoraJanelas` qual é a
-próxima janela e dorme até lá. `SqsConsumerHostedService<TMessage>`
-(`CnabRetorno.Common`) é a terceira variante — long-polling numa fila —,
-hoje sem uso pelos robôs.
+próxima janela e dorme até lá.
 
 ### Options pattern
 
 Três variantes usadas, cada uma pro cenário certo:
 
 1. **`IOptions<T>`** — configuração que não muda em runtime, resolvida uma
-   vez. A maioria dos casos: `SqsOptions`, `GestorArquivoOptions`, `OrigemOptions`.
+   vez. A maioria dos casos: `GestorArquivoOptions`, `OrigemOptions`, `RetornoOptions`.
    ```csharp
    builder.Services.Configure<S3Options>(builder.Configuration.GetSection(S3Options.Secao));
    // consumida via IOptions<S3Options> no construtor
@@ -286,23 +284,14 @@ robô precisar de uma tabela **própria** algum dia (hoje nenhum tem, ver
 dono do seu schema — não misturar isso dentro de `CobrancaDbContext`, que
 existe justamente pra falar com um schema de terceiro.
 
-## 5. Mensageria (AWS SQS — `AWSSDK.SQS`)
+## 5. Mensageria
 
-> Nenhum dos dois robôs atuais consome fila: o Robô 1 é ingestão pura e o
-> Robô 2 usa o conversor síncrono. A seção descreve a capacidade que fica
-> na biblioteca compartilhada, com todo nome de fila resolvido por
-> configuração (`SqsOptions.ResolverFila`), nunca literal em código.
-
-Implementado em `CnabRetorno.Common/Mensageria/`: `IMessageService<T>`
-como abstração de handler (o contrato que sobrevive a uma eventual troca
-de broker), `IAmazonSQS` singleton (client caro de abrir, ver seção 2),
-`SqsConsumerHostedService<T>` genérico fazendo long-polling
-(`ReceiveMessageAsync`) e o papel de "roteador" entre a fila e o
-`IMessageService<T>` handler certo — resolvido num escopo de DI próprio
-por mensagem (mesmo raciocínio de thread-safety do `DbContext`, seção 2).
-Confirmação (delete da mensagem) só acontece depois do handler retornar
-sem lançar exceção; sem delete, a mensagem reaparece sozinha na fila
-depois do `VisibilityTimeout`.
+Não há: nenhum dos dois robôs consome ou publica em fila — o Robô 1 é
+ingestão pura e o Robô 2 usa o conversor síncrono. Se um consumidor
+voltar a existir, ele nasce na `CnabRetorno.Common`, com o nome da fila
+vindo de configuração (nunca literal em código) e o handler resolvido num
+escopo de DI próprio por mensagem — mesmo raciocínio de thread-safety do
+`DbContext` da seção 2.
 
 ## 6. Testes (xUnit)
 
@@ -343,7 +332,7 @@ depois do `VisibilityTimeout`.
   possível hoje. Ver `docs/evoluindo-com-libs-externas.md` pro raciocínio
   completo.
 - **Regra do adaptador único**: qualquer tipo de uma lib/API externa
-  (`AWSSDK.SQS`, o shape da API de conversão, o shape do Gestor de
+  (`AWSSDK.S3`, o shape da API de conversão, o shape do Gestor de
   Arquivos) é conhecido por **uma única classe** do projeto — os DTOs
   ficam em `Core`, mas quem monta a chamada HTTP de verdade é só
   `LayoutConversaoApiClient`/`GestorArquivosApiClient`. Um breaking change
