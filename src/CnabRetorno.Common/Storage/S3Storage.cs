@@ -3,7 +3,7 @@ using Amazon.S3.Model;
 using CnabRetorno.Core.Aplicacao;
 using Microsoft.Extensions.Options;
 
-namespace CnabRetorno.RemessaVan.Worker.Storage;
+namespace CnabRetorno.Common.Storage;
 
 public class ArmazenamentoOptions
 {
@@ -11,12 +11,12 @@ public class ArmazenamentoOptions
 
     /// <summary>"GestorArquivos" (padrão) ou "S3".
     ///
-    /// As duas versões existem por pedido explícito. O padrão é o Gestor
-    /// de Arquivos: é o caminho oficial do ecossistema CASH, e
-    /// docs/cash-cobranca-referencia.md §5.5 registra que acesso direto ao
-    /// S3 não é o padrão. O modo "S3" existe pra ambiente onde o Gestor
-    /// ainda não esteja disponível — na extração de 03/08/2026 ele estava
-    /// falhando em AWS e em GCP.</summary>
+    /// As duas versões existem por pedido explícito, nos dois robôs. O
+    /// padrão é o Gestor de Arquivos: é o caminho oficial do ecossistema
+    /// CASH, e docs/cash-cobranca-referencia.md §5.5 registra que acesso
+    /// direto ao S3 não é o padrão. O modo "S3" existe pra ambiente onde
+    /// o Gestor ainda não esteja disponível — na extração de 03/08/2026
+    /// ele estava falhando em AWS e em GCP.</summary>
     public string Modo { get; set; } = "GestorArquivos";
 
     public S3Options S3 { get; set; } = new();
@@ -40,9 +40,12 @@ public class S3Options
 /// Grava direto no S3 via <c>PutObject</c>. Alternativa ao
 /// <c>GestorArquivoStorage</c>, selecionada por <c>Storage:Modo</c>.
 ///
+/// Mora na Common porque os dois robôs usam a mesma implementação — só o
+/// bucket/prefixo mudam, e isso já é configuração.
+///
 /// A chave do objeto inclui o <c>ArquivoID</c> além do nome: dois
-/// clientes podem mandar arquivos de mesmo nome no mesmo dia, e a chave
-/// precisa bater com o identificador que ficou registrado no banco.
+/// clientes podem mandar/gerar arquivos de mesmo nome no mesmo dia, e a
+/// chave precisa bater com o identificador que ficou registrado no banco.
 /// </summary>
 public class S3Storage(IAmazonS3 s3, IOptions<ArmazenamentoOptions> opcoes) : IArmazenamentoArquivo
 {

@@ -76,7 +76,9 @@
       "Bash(curl -s \"https://api.nuget.org/v3-flatcontainer/awssdk.s3/index.json\")",
       "Bash(python3 -c \"import json,sys; v=[x for x in json.load\\(sys.stdin\\)['versions'] if x.startswith\\('4.'\\) and '-' not in x]; print\\(v[-5:]\\)\")",
       "Bash(sed 's/namespace CnabRetorno.PagamentoRetorno.Worker.Persistencia;/namespace CnabRetorno.RemessaVan.Worker.Persistencia;/; s/duas réplicas do worker de gerarem a mesma janela: sem/duas réplicas do worker de processarem a mesma varredura: sem/; s|isso, cada uma produziria um arquivo por cliente com NSAs diferentes —|isso, as duas leriam o mesmo arquivo da pasta e cada uma o ingeriria|; s|pior que um erro visível, porque os dois pareceriam legítimos. O banco|com um GUID próprio \\(a corrida de File.Move só derruba uma delas DEPOIS\\\\n/// do registro feito\\). O banco|; s/a réplica\\\\n/a réplica\\\\n/' src/CnabRetorno.PagamentoRetorno.Worker/Persistencia/LockExecucaoExclusiva.cs)",
-      "Bash(sed -i '' 's/perdedora pula a janela em vez de enfileirar atrás da vencedora e/perdedora pula a varredura em vez de enfileirar atrás da vencedora e/; s/gerar tudo de novo logo depois./varrer tudo de novo logo depois./' src/CnabRetorno.RemessaVan.Worker/Persistencia/LockExecucaoExclusiva.cs)"
+      "Bash(sed -i '' 's/perdedora pula a janela em vez de enfileirar atrás da vencedora e/perdedora pula a varredura em vez de enfileirar atrás da vencedora e/; s/gerar tudo de novo logo depois./varrer tudo de novo logo depois./' src/CnabRetorno.RemessaVan.Worker/Persistencia/LockExecucaoExclusiva.cs)",
+      "Bash(ls /private/tmp/claude-501/-Users-danielbfr3-Downloads-arquivo-retorno-worker/*/scratchpad/pdftxt/ 2>/dev/null | head -5 || echo \"not found, will re-extract\")",
+      "Read(//private/tmp/claude-501/-Users-danielbfr3-Downloads-arquivo-retorno-worker/**)"
     ],
     "additionalDirectories": [
       "/private/tmp/mermaid-check",

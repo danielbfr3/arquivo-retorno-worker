@@ -1,8 +1,11 @@
+using Amazon;
+using Amazon.S3;
 using CnabRetorno.Common.Http;
 using CnabRetorno.Common.Storage;
 using CnabRetorno.Core.Aplicacao;
 using CnabRetorno.PagamentoRetorno.Worker;
 using CnabRetorno.PagamentoRetorno.Worker.Agendamento;
+using CnabRetorno.PagamentoRetorno.Worker.Cnab;
 using CnabRetorno.PagamentoRetorno.Worker.Http;
 using CnabRetorno.PagamentoRetorno.Worker.Json;
 using CnabRetorno.PagamentoRetorno.Worker.Persistencia;
@@ -16,7 +19,9 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Services.Configure<JanelaOptions>(builder.Configuration.GetSection(JanelaOptions.Secao));
 builder.Services.Configure<RetornoOptions>(builder.Configuration.GetSection(RetornoOptions.Secao));
 builder.Services.Configure<ConversaoOptions>(builder.Configuration.GetSection(ConversaoOptions.Secao));
+builder.Services.Configure<GeracaoOptions>(builder.Configuration.GetSection(GeracaoOptions.Secao));
 builder.Services.Configure<RegistroArquivoOptions>(builder.Configuration.GetSection(RegistroArquivoOptions.Secao));
+builder.Services.Configure<ArmazenamentoOptions>(builder.Configuration.GetSection(ArmazenamentoOptions.Secao));
 builder.Services.Configure<GestorArquivoOptions>(builder.Configuration.GetSection(GestorArquivoOptions.Secao));
 builder.Services.Configure<ApiClientOptions>(
     "LayoutConversaoApi", builder.Configuration.GetSection("LayoutConversaoApi"));
@@ -39,15 +44,33 @@ builder.Services.AddScoped<ControleJanelaRepository>();
 builder.Services.AddSingleton<CalculadoraJanelas>();
 builder.Services.AddScoped<MontagemRetornoPagamento>();
 
-// API de conversão (síncrona: JSON entra, CNAB volta na mesma resposta).
-builder.Services.AddHttpClient<ILayoutConversaoApiClient, LayoutConversaoApiClient>((sp, http) =>
+// Geração do CNAB final: via conversor externo (padrão) ou direta
+// (Geracao:Modo=CnabDireto — ver docs/pagamento-referencia.md §5). No
+// modo direto, ASA_CASH_ADESAO só é registrada quando de fato é usada:
+// sem isso, um ambiente sem ConnectionStrings:Adesao configurada
+// quebraria mesmo no modo padrão, por uma dependência que ele não usa.
+var modoGeracao = builder.Configuration.GetValue<string>($"{GeracaoOptions.Secao}:Modo") ?? "Conversor";
+
+if (string.Equals(modoGeracao, "CnabDireto", StringComparison.OrdinalIgnoreCase))
 {
-    var opt = sp.GetRequiredService<IOptionsMonitor<ApiClientOptions>>().Get("LayoutConversaoApi");
-    http.BaseAddress = new Uri(opt.BaseUrl);
-    http.Timeout = opt.Timeout;
-    if (!string.IsNullOrWhiteSpace(opt.ApiKey))
-        http.DefaultRequestHeaders.Add("X-Api-Key", opt.ApiKey);
-}).AddStandardResilienceHandler();
+    builder.Services.AddDbContext<AdesaoDbContext>(opt =>
+        opt.UseSqlServer(builder.Configuration.GetConnectionString("Adesao")));
+    builder.Services.AddScoped<EmpresaAdesaoRepository>();
+    builder.Services.AddScoped<IGeradorCnabPagamento, CnabDiretoGeradorCnabPagamento>();
+}
+else
+{
+    // API de conversão (síncrona: JSON entra, CNAB volta na mesma resposta).
+    builder.Services.AddHttpClient<ILayoutConversaoApiClient, LayoutConversaoApiClient>((sp, http) =>
+    {
+        var opt = sp.GetRequiredService<IOptionsMonitor<ApiClientOptions>>().Get("LayoutConversaoApi");
+        http.BaseAddress = new Uri(opt.BaseUrl);
+        http.Timeout = opt.Timeout;
+        if (!string.IsNullOrWhiteSpace(opt.ApiKey))
+            http.DefaultRequestHeaders.Add("X-Api-Key", opt.ApiKey);
+    }).AddStandardResilienceHandler();
+    builder.Services.AddScoped<IGeradorCnabPagamento, ConversorGeradorCnabPagamento>();
+}
 
 // API Gestor Arquivo — presigned URLs, nunca S3 direto
 // (docs/cash-cobranca-referencia.md §5.5).
@@ -60,10 +83,32 @@ builder.Services.AddHttpClient<IGestorArquivosApiClient, GestorArquivosApiClient
         http.DefaultRequestHeaders.Add("X-Api-Key", opt.ApiKey);
 }).AddStandardResilienceHandler();
 
-// O PUT vai num HttpClient próprio: a URL assinada é absoluta e aponta
-// pro S3, não pra API — um BaseAddress atrapalharia.
-builder.Services.AddHttpClient<GestorArquivoStorage>().AddStandardResilienceHandler();
-builder.Services.AddScoped<IArmazenamentoArquivo>(sp => sp.GetRequiredService<GestorArquivoStorage>());
+// Storage: as duas versões pedidas convivem, escolhidas por Storage:Modo
+// — mesmo padrão do Robô 1 (ver RemessaVan.Worker/Program.cs).
+var modoStorage = builder.Configuration.GetValue<string>($"{ArmazenamentoOptions.Secao}:Modo") ?? "GestorArquivos";
+
+if (string.Equals(modoStorage, "S3", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<IAmazonS3>(sp =>
+    {
+        var opt = sp.GetRequiredService<IOptions<ArmazenamentoOptions>>().Value.S3;
+        var config = new AmazonS3Config { RegionEndpoint = RegionEndpoint.GetBySystemName(opt.Region) };
+        if (!string.IsNullOrWhiteSpace(opt.ServiceUrl))
+        {
+            config.ServiceURL = opt.ServiceUrl;
+            config.ForcePathStyle = true; // LocalStack/MinIO não suportam virtual-hosted style
+        }
+        return new AmazonS3Client(config);
+    });
+    builder.Services.AddScoped<IArmazenamentoArquivo, S3Storage>();
+}
+else
+{
+    // O PUT vai num HttpClient próprio: a URL assinada é absoluta e
+    // aponta pro S3, não pra API — um BaseAddress atrapalharia.
+    builder.Services.AddHttpClient<GestorArquivoStorage>().AddStandardResilienceHandler();
+    builder.Services.AddScoped<IArmazenamentoArquivo>(sp => sp.GetRequiredService<GestorArquivoStorage>());
+}
 
 // Pipeline.
 builder.Services.AddScoped<ProcessadorRetornoPagamentoService>();

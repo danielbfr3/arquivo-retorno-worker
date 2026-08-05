@@ -218,3 +218,51 @@ mas não valida que as colunas existem no banco.
 de maior atenção nesse primeiro contato: o `UNION ALL` das cinco duplas,
 a reserva de NSA e o `sp_getapplock` (os três em SQL/ADO cru, sem teste
 de integração).
+
+---
+
+## 13. `Geracao:Modo=CnabDireto` pula a homologação do conversor
+
+**Bloqueante pra produção neste modo — não afeta o modo padrão.**
+
+O conversor externo é o motor de layout **já homologado** com cada banco
+e cada cliente — validação de tamanho de campo, regras específicas de
+convênio, particularidades que só aparecem testando contra o ambiente
+real do banco. `EscritorCnab240Pagamento` reimplementa a formatação
+posicional a partir do manual FEBRABAN, sem nenhuma dessas validações
+externas.
+
+**Cenário:** um banco específico exige um valor fixo diferente do default
+num campo que o layout trata como opcional (o próprio manual documenta
+isso pra "Indicativo de Forma de Pagamento", por exemplo). O conversor já
+sabe disso pelo cadastro; o escritor direto não tem de onde saber, e o
+arquivo é rejeitado no banco — depois de já ter sido registrado como
+gerado com sucesso.
+
+**Decisão:** modo opt-in, `Conversor` continua sendo o padrão. Ativar
+`CnabDireto` é decisão de negócio explícita, documentada em
+docs/pagamento-referencia.md §6 — não uma migração silenciosa.
+
+---
+
+## 14. Dados institucionais de `ASA_CASH_ADESAO` são placeholder completo
+
+**Bloqueante pra produção no modo `CnabDireto`.**
+
+Diferente dos outros itens `TODO(a-confirmar)` deste projeto (que erram
+um nome de coluna isolado), aqui **a base inteira nunca foi
+inspecionada** — nome de schema, tabela e todas as colunas de
+`Core.Dominio.EmpresaAdesao`/`AdesaoDbContext` são chute.
+
+**Cenário:** a query falha porque a tabela/coluna não existe (caso mais
+provável e mais seguro — a geração daquele cliente falha isolada, sem
+gravar nada errado). Pior caso: uma tabela/coluna homônima existir por
+coincidência com outro propósito, e o worker escrever um convênio ou uma
+conta errados num header que o banco aceita sem reclamar — o arquivo sai
+"válido" e chega ao cliente com o dado institucional trocado.
+
+**Decisão:** o pior caso (coincidência silenciosa) não tem mitigação
+possível em código — só a confirmação do schema real evita. O caso mais
+provável (tabela/coluna inexistente) já falha alto por natureza do EF.
+Não ativar `Geracao:Modo=CnabDireto` até o schema de `ASA_CASH_ADESAO`
+ser confirmado e `AdesaoDbContext.OnModelCreating` corrigido.

@@ -5,7 +5,7 @@ Dois workers .NET 10, independentes entre si:
 | Robô | Projeto | O que faz |
 |---|---|---|
 | **1** | `CnabRetorno.RemessaVan.Worker` | Varre a pasta onde as VANs depositam remessas CNAB, renomeia no padrão ASA, guarda no Gestor de Arquivos (ou no S3) e registra em `Cobranca.Arquivo`. |
-| **2** | `CnabRetorno.PagamentoRetorno.Worker` | Das 7h às 18h, gera arquivos de retorno de pagamentos — parciais de hora em hora e um consolidado no fim do dia — via conversor síncrono, guardados e registrados em `Pagamento.Arquivo`. |
+| **2** | `CnabRetorno.PagamentoRetorno.Worker` | Das 7h às 18h, gera arquivos de retorno de pagamentos — parciais de hora em hora e um consolidado no fim do dia —, guardados e registrados em `Pagamento.Arquivo`. CNAB via conversor externo (padrão) ou escrito pelo próprio robô, ver `Geracao:Modo`. |
 
 Os dois não conversam. Compartilham `CnabRetorno.Core` (domínio e
 contratos, zero dependência externa) e `CnabRetorno.Common`
@@ -21,17 +21,17 @@ src/
     Dominio/                        Arquivo, MovimentacaoPagamento, enums
   CnabRetorno.Common/               infra compartilhada
     Http/                           base HTTP + client do Gestor de Arquivos
-    Storage/                        upload via presigned URL
+    Storage/                        upload via presigned URL ou S3 direto
   CnabRetorno.RemessaVan.Worker/    Robô 1
     Vans/                           máscaras das VANs, nome padrão ASA
     Origem/                         pasta de entrada, backup, quarentena
-    Storage/                        modo S3 direto
     Persistencia/                   CASH_COBRANCA
     Pipeline/
   CnabRetorno.PagamentoRetorno.Worker/  Robô 2
     Agendamento/                    grade de janelas 7h–18h
-    Persistencia/                   ASA_CASH_PAGAMENTO (UNION dos 5 meios)
+    Persistencia/                   ASA_CASH_PAGAMENTO (UNION dos 5 meios) + ASA_CASH_ADESAO
     Json/                           parse da remessa gravada + montagem do JSON
+    Cnab/                           gerador de CNAB: via conversor ou direto (Geracao:Modo)
     Http/                           conversor síncrono
     Pipeline/
 tests/CnabRetorno.Tests/
@@ -81,8 +81,11 @@ literal em código. Em cluster, sobrescrever por variável de ambiente com
 | `Janela:HoraInicio` / `HoraFim` / `IntervaloParcial` | Grade de geração |
 | `Janela:FusoHorario` | Sem isso, o "arquivo das 7h" sai às 4h num pod em UTC |
 | `Janela:TimestampsBancoEmUtc` | Em que fuso a base grava os timestamps (**em aberto** — errado desloca o corte em 3h) |
-| `Conversao:Pipeline` | Pipeline do conversor (**em aberto**) |
+| `Geracao:Modo` | `Conversor` (padrão) ou `CnabDireto` — ver `docs/pagamento-referencia.md` §6 |
+| `Conversao:Pipeline` | Pipeline do conversor (**em aberto**, só usado em `Geracao:Modo=Conversor`) |
+| `ConnectionStrings:Adesao` | ASA_CASH_ADESAO — só usada em `Geracao:Modo=CnabDireto` (**schema inteiro em aberto**) |
 | `Retorno:CodigoBanco` / `TipoServico` | Header do arquivo |
+| `Storage:Modo` | `GestorArquivos` (padrão) ou `S3` |
 | `ConnectionStrings:Pagamento` | ASA_CASH_PAGAMENTO |
 
 ## Antes de homologação
@@ -103,6 +106,10 @@ mais críticos:
   ecossistema CASH inteiro.
 - **Fuso dos timestamps de `ASA_CASH_PAGAMENTO`** — `Janela:TimestampsBancoEmUtc`
   corrige com uma chave, mas precisa da resposta do time dono da base.
+- **Schema de `ASA_CASH_ADESAO` inteiro** (só se `Geracao:Modo=CnabDireto`
+  for ativado) — base nunca inspecionada; nome de tabela e todas as
+  colunas de `EmpresaAdesao` são chute. Ver
+  [`docs/pagamento-referencia.md`](docs/pagamento-referencia.md#6-modo-cnabdireto--o-robô-escreve-o-cnab-sem-passar-pelo-conversor) §6.
 
 ## Documentação
 

@@ -1,21 +1,22 @@
-using System.Text.Json;
 using CnabRetorno.Core.Aplicacao;
 using CnabRetorno.PagamentoRetorno.Worker.Agendamento;
+using CnabRetorno.PagamentoRetorno.Worker.Cnab;
 using CnabRetorno.PagamentoRetorno.Worker.Json;
 using CnabRetorno.PagamentoRetorno.Worker.Persistencia;
 
 namespace CnabRetorno.PagamentoRetorno.Worker.Pipeline;
 
 /// <summary>
-/// Gera, converte, guarda e registra o arquivo de retorno de **um**
-/// cliente numa janela.
+/// Monta o JSON, gera o CNAB (via <see cref="IGeradorCnabPagamento"/> —
+/// conversor externo ou escrita direta, conforme <c>Geracao:Modo</c>),
+/// guarda e registra o arquivo de retorno de **um** cliente numa janela.
 ///
 /// Ordem das escritas, e o porquê de cada uma:
 /// <list type="number">
 ///   <item>Reserva o NSA (atômico) — se falhar, nada foi criado.</item>
 ///   <item>Cria a linha em <c>Pagamento.Arquivo</c> pra ter o
-///   <c>ArquivoID</c>, que é o id usado no conversor e no storage.</item>
-///   <item>Converte e guarda. Qualquer falha daqui pra trás remove a
+///   <c>ArquivoID</c>, que é o id usado na geração e no storage.</item>
+///   <item>Gera e guarda. Qualquer falha daqui pra trás remove a
 ///   linha: melhor não ter registro do que registrar um arquivo que não
 ///   existe.</item>
 ///   <item>Marca a linha como registrada e só então avança a marca
@@ -27,17 +28,11 @@ public class ProcessadorRetornoPagamentoService(
     SequencialArquivoRepository sequenciais,
     ArquivoRepository arquivos,
     MontagemRetornoPagamento montagem,
-    ILayoutConversaoApiClient conversor,
+    IGeradorCnabPagamento gerador,
     IArmazenamentoArquivo armazenamento,
     ControleJanelaRepository controleJanela,
     ILogger<ProcessadorRetornoPagamentoService> logger)
 {
-    private static readonly JsonSerializerOptions JsonOpcoes = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-    };
-
     public async Task ProcessarAsync(
         MovimentacoesDoCliente cliente, Ocorrencia janela, CancellationToken ct)
     {
@@ -54,13 +49,11 @@ public class ProcessadorRetornoPagamentoService(
 
         try
         {
-            var json = JsonSerializer.SerializeToUtf8Bytes(dados, JsonOpcoes);
-
-            var conversao = await conversor.ConverterJsonParaCnabAsync(
-                json, $"{nomeArquivo}.json", arquivoId.ToString(), ct);
+            var conteudoCnab = await gerador.GerarAsync(
+                dados, cliente.Documento, nomeArquivo, arquivoId.ToString(), ct);
 
             var armazenado = await armazenamento.ArmazenarAsync(
-                arquivoId, nomeArquivo, conversao.ConteudoCnab(), ct);
+                arquivoId, nomeArquivo, conteudoCnab, ct);
 
             await arquivos.MarcarRegistradoAsync(arquivoId, ct);
 

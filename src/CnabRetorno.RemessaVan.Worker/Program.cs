@@ -7,7 +7,6 @@ using CnabRetorno.RemessaVan.Worker;
 using CnabRetorno.RemessaVan.Worker.Origem;
 using CnabRetorno.RemessaVan.Worker.Persistencia;
 using CnabRetorno.RemessaVan.Worker.Pipeline;
-using CnabRetorno.RemessaVan.Worker.Storage;
 using CnabRetorno.RemessaVan.Worker.Vans;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;

@@ -93,11 +93,11 @@ public class CobrancaDbContext(DbContextOptions<CobrancaDbContext> options) : Db
             e.ToTable("Parametro", schema: "Cobranca");
             e.HasNoKey();
             e.Property(p => p.Documento).HasColumnName("Documento").HasMaxLength(20);
-            // TODO(a-confirmar): o nome real da coluna de conta em
-            // Cobranca.Parametro não foi capturado — só SequencialAtual e
-            // Documento aparecem no material. Se for outro nome, é aqui
-            // que se corrige (uma linha), não no repositório.
-            e.Property(p => p.ContaHeader).HasColumnName("ContaHeader").HasMaxLength(10);
+            // Nome real da coluna é CodigoConta, não ContaHeader — ver
+            // docs/cash-cobranca-referencia.md §1.1. O nome em C# fica
+            // ContaHeader por consistência com Core.Dominio.Arquivo
+            // (ClienteContaHeader), que é como o valor é usado depois.
+            e.Property(p => p.ContaHeader).HasColumnName("CodigoConta").HasMaxLength(10);
         });
     }
 }

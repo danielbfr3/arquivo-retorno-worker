@@ -20,11 +20,5 @@
     -->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
-    <!--
-      Só pro modo de storage "S3" (Storage:Modo). O modo padrão é
-      "GestorArquivos" (presigned URL), que não usa SDK nenhum — ver
-      Storage/ArmazenamentoOptions.cs sobre por que as duas versões existem.
-    -->
-    <PackageReference Include="AWSSDK.S3" Version="4.0.101.6" />
   </ItemGroup>
 </Project>

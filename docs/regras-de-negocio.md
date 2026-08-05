@@ -10,8 +10,9 @@ Dois robôs independentes, sem comunicação entre si. Compartilham o
 | O que faz | Ingere as remessas que as VANs depositam numa pasta | Gera os arquivos de retorno de pagamentos |
 | Gatilho | Varredura periódica (cron) | Janelas de horário (07h–18h) |
 | Base | `CASH_COBRANCA` | `ASA_CASH_PAGAMENTO` |
-| Converte? | **Não** | Sim, JSON → CNAB síncrono |
+| Converte? | **Não** | Sim — via conversor (padrão) ou escrito direto pelo robô, ver `Geracao:Modo` |
 | Fila | Nenhuma | Nenhuma |
+| Storage | Gestor de Arquivos ou S3, ver `Storage:Modo` | Idem |
 
 ---
 
@@ -245,6 +246,35 @@ no meio libera sozinho. Sem isso, duas réplicas do Robô 2 gerariam dois
 arquivos por cliente com NSAs diferentes — pior que um erro visível,
 porque os dois pareceriam legítimos.
 
+### Geração do CNAB: conversor ou direta
+
+`Geracao:Modo` escolhe **como** o `RetornoPagamentoJson` já montado vira
+arquivo — o resto do pipeline (NSA, registro, storage, marca d'água) não
+muda:
+
+- **`Conversor`** (padrão) — envia o JSON pro conversor síncrono externo,
+  que devolve o CNAB240 pronto e completa os dados institucionais do
+  header a partir do cadastro próprio dele.
+- **`CnabDireto`** — o worker escreve o CNAB240 posicionalmente
+  (`Core.Cnab240.EscritorCnab240Pagamento`), sem chamar o conversor. Os
+  dados institucionais (convênio, agência/conta com dígitos
+  verificadores, nome, endereço da empresa) — que não existem em nenhuma
+  tabela de `ASA_CASH_PAGAMENTO` — vêm de `ASA_CASH_ADESAO`, uma base
+  **nunca inspecionada**: o mapeamento inteiro (`EmpresaAdesao`,
+  `AdesaoDbContext`) é placeholder, corrigível num único arquivo quando o
+  schema real chegar. Ver docs/pagamento-referencia.md §6 pro de-para
+  completo e docs/riscos-conhecidos.md pro trade-off de pular a
+  homologação do conversor.
+
+  Cliente sem linha em `ASA_CASH_ADESAO` faz a geração **falhar** (não
+  escreve header incompleto) — falha isolada do arquivo, mesmo tratamento
+  de qualquer outra falha nesta etapa.
+
+`ProcessadorRetornoPagamentoService` não sabe qual dos dois está ativo —
+depende só de `IGeradorCnabPagamento`, resolvido no `Program.cs` pela
+mesma técnica já usada pra `Storage:Modo` (lê a configuração antes do
+`Build()`, registra a implementação certa).
+
 ---
 
 ## Em aberto
@@ -254,8 +284,9 @@ homologação:
 
 | Ponto | Onde | Impacto |
 |---|---|---|
-| Nome do pipeline de conversão de pagamentos | `Http/ConversaoOptions.cs` | Sem o valor certo, o conversor rejeita a chamada. |
+| Nome do pipeline de conversão de pagamentos | `Http/ConversaoOptions.cs` | Sem o valor certo, o conversor rejeita a chamada (só afeta `Geracao:Modo=Conversor`). |
 | Shape do JSON de pagamentos | `Core/Aplicacao/Dtos/RetornoPagamentoJson.cs` | É **proposta** derivada do layout, não contrato observado. |
+| Schema de `ASA_CASH_ADESAO` inteiro | `Core/Dominio/EmpresaAdesao.cs`, `Persistencia/AdesaoDbContext.cs` | Base nunca inspecionada — schema/tabela/colunas são placeholder. Só afeta `Geracao:Modo=CnabDireto`. |
 | Schema de `Pagamento.Arquivo` e `Pagamento.Parametro` | `Persistencia/PagamentoDbContext.cs` | Não capturados; mapeados como espelho dos de cobrança. |
 | Valores numéricos de `ArquivoStatus`/`ArquivoEtapa` | `Core/Dominio/Arquivo.cs` | Nomes conhecidos, números supostos — em tabela compartilhada. |
 | `CodigoOcorrencia` é FEBRABAN mesmo? | `Core/Dominio/StatusPagamento.cs` | Se for código interno de mesma largura, o cliente recebe código inválido. |

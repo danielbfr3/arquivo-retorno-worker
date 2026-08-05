@@ -229,3 +229,97 @@ mapeados como **espelho** dos equivalentes de cobrança, com
 `TODO(a-confirmar)` no `PagamentoDbContext`. As tabelas de idempotência
 não são usadas por este robô — o controle de reenvio é a marca d'água do
 §4, que é por cliente e janela, não por pagamento.
+
+---
+
+## 6. Modo `CnabDireto` — o robô escreve o CNAB sem passar pelo conversor
+
+`Geracao:Modo` tem dois valores: `Conversor` (padrão, descrito nas seções
+acima) e `CnabDireto`. Os dois consomem o **mesmo**
+`RetornoPagamentoJson` — a diferença é só o que transforma esse objeto no
+arquivo final:
+
+| | `Conversor` | `CnabDireto` |
+|---|---|---|
+| Quem escreve o CNAB | API externa | `Core.Cnab240.EscritorCnab240Pagamento`, neste repositório |
+| Homologação byte-a-byte com cada cliente | Já existe (motor compartilhado do time) | Nenhuma — responsabilidade passa a ser deste projeto |
+| Dados institucionais do header | Cadastro próprio do conversor completa o que falta | Precisa vir de algum lugar — ver §6.1 |
+
+`ProcessadorRetornoPagamentoService` não sabe qual dos dois está ativo —
+resolve por `IGeradorCnabPagamento`, escolhido no `Program.cs` a partir de
+`Geracao:Modo` (a mesma leitura de config antes do `Build()` já usada pra
+`Storage:Modo`).
+
+### 6.1 Os 4 campos que não existem em nenhuma tabela mapeada
+
+Nenhuma das cinco duplas de meio de pagamento, nem `Pagamento.Arquivo`,
+nem `Pagamento.Parametro` (mesmo como espelho de cobrança) têm: **código
+do convênio** (G007), **agência/conta da empresa com dígitos
+verificadores** (G008-G012, separados de `ClienteContaHeader`), **nome da
+empresa** (G013 — só existe best-effort via `DebitoNome`, que boleto/
+tricon não têm) e **endereço da empresa** (G032-G036, só no header de
+lote).
+
+O usuário apontou `ASA_CASH_ADESAO` como fonte provável — **mas essa base
+nunca foi inspecionada**. `Core.Dominio.EmpresaAdesao` e
+`AdesaoDbContext` (`PagamentoRetorno.Worker/Persistencia/`) são
+**placeholder inteiro**: nome de schema (`Adesao`), tabela (`Empresa`) e
+toda coluna são chute razoável, com `TODO(a-confirmar)` em bloco na classe
+inteira. Corrigir é um único arquivo
+(`AdesaoDbContext.OnModelCreating`) quando o schema real chegar.
+
+Sem linha em `ASA_CASH_ADESAO` pro cliente, a geração falha
+(`EmpresaAdesaoNaoEncontradaException`) em vez de escrever um header
+incompleto — um convênio zerado costuma rejeitar o lote inteiro no banco,
+e falhar um arquivo é sempre preferível a entregar um inválido.
+
+### 6.2 De onde vem cada campo do header, no modo direto
+
+Campos 18-102 (tipo/número de inscrição, convênio, agência/conta+DVs,
+nome) são **idênticos em posição** no header de arquivo e no header de
+cada lote — `EscritorCnab240Pagamento.EscreverBlocoEmpresa` escreve os
+dois a partir da mesma lógica:
+
+| Campo | Prioridade |
+|---|---|
+| Tipo/número de inscrição | Sempre do JSON (`Arquivo.Empresa`/`Lote.Empresa`) — dado transacional, correto nos dois modos |
+| Convênio | Só `EmpresaAdesao` — não existe em nenhum outro lugar |
+| Agência/conta/DVs | `EmpresaAdesao`, com fallback pra `Conta` do JSON (dados de débito das movimentações) se a linha de adesão não tiver o campo |
+| Nome da empresa | `EmpresaAdesao`, com fallback pro nome do JSON (`DebitoNome`) |
+| Endereço (só header de lote) | Só `EmpresaAdesao` — sem fallback, não existe em outro lugar |
+
+O código do banco (posições 1-3) é a exceção: sai de
+`RetornoOptions.CodigoBanco` (via `Arquivo.Banco` no JSON) e se repete
+**em toda linha do arquivo**, não só no header — é um detalhe fácil de
+esquecer ao escrever um gerador posicional linha a linha.
+
+### 6.3 J-52: pagador/beneficiário
+
+O registro opcional J-52 muda de forma conforme o segmento J é um título
+tradicional ou um PIX QR-Code (ver §2.2 — os dois usam a forma `47`/`30`/
+`31`, todos segmento J):
+
+- **Título** (boleto/tricon): Pagador = a própria empresa (dados de
+  `EmpresaAdesao`); Beneficiário = quem emitiu o título
+  (`TituloPagamento.NomeBeneficiario`/inscrição). O terceiro bloco do
+  J-52 (posições 132-187, "responsável pela emissão do título original")
+  repete o Beneficiário — `TODO(a-confirmar)`: o layout descreve esse
+  campo como relevante pra cenário de agregador/re-emissão (Segmento
+  J-53), que este worker não distingue.
+- **PIX QR-Code**: variante própria do J-52 (mesmas posições 18-19="52",
+  mas 132-210 é a chave/URL, não um terceiro bloco de pessoa). Devedor =
+  a empresa; Favorecido = quem recebeu (`DetalhePagamento.Favorecido`,
+  já resolvido por `MontagemRetornoPagamento.MontarFavorecidoPix`).
+
+Note que os campos de inscrição do J-52 têm **15** posições (77-91,
+133-147), uma a mais que os 14 do header e do segmento B — um CNPJ de 14
+dígitos sai com um zero à esquerda ali, não é bug.
+
+### 6.4 O que fica de fora, nos dois modos
+
+`EscritorCnab240Pagamento` não modela (branco/zero, documentado em
+comentário no código): Nome do Banco no header de arquivo (G014),
+Informação 1 do header de lote (G031, mensagem livre), Indicativo de
+Forma de Pagamento (P014), Quantidade de Moeda (G041, todos os
+segmentos), Número Aviso de Débito (G066), TXID do PIX. Nenhum desses
+tem, hoje, uma coluna de origem identificada em `ASA_CASH_PAGAMENTO`.

@@ -28,6 +28,10 @@ public class ModeloEfTests
         => new(new DbContextOptionsBuilder<Pagamento.PagamentoDbContext>()
             .UseSqlServer(ConexaoFalsa).Options);
 
+    private static Pagamento.AdesaoDbContext Adesao()
+        => new(new DbContextOptionsBuilder<Pagamento.AdesaoDbContext>()
+            .UseSqlServer(ConexaoFalsa).Options);
+
     [Fact]
     public void Modelo_de_cobranca_deve_ser_valido()
     {
@@ -115,5 +119,22 @@ public class ModeloEfTests
 
         Assert.NotNull(chave);
         Assert.Equal(["Md5"], chave.Properties.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void Empresa_adesao_deve_ter_o_documento_como_chave()
+    {
+        // Só registrado no DI quando Geracao:Modo=CnabDireto (ver
+        // Program.cs) — mas o modelo em si tem que ser válido sempre,
+        // já que é este teste que garante isso sem banco real.
+        using var db = Adesao();
+
+        var empresa = db.Model.FindEntityType(typeof(EmpresaAdesao))!;
+        var chave = empresa.FindPrimaryKey();
+
+        Assert.NotNull(chave);
+        Assert.Equal(["Documento"], chave.Properties.Select(p => p.Name));
+        Assert.Equal("Empresa", empresa.GetTableName());
+        Assert.Equal("Adesao", empresa.GetSchema());
     }
 }

@@ -22,5 +22,11 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+    <!--
+      Storage/S3Storage.cs — alternativa ao Gestor de Arquivos, escolhida
+      por Storage:Modo. Usado pelos dois robôs, por isso mora aqui e não
+      duplicado em cada um.
+    -->
+    <PackageReference Include="AWSSDK.S3" Version="4.0.101.6" />
   </ItemGroup>
 </Project>
