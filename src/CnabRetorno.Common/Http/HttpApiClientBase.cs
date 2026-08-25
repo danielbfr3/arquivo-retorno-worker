@@ -5,9 +5,9 @@ namespace CnabRetorno.Common.Http;
 
 /// <summary>
 /// Base fina sobre HttpClient com JSON + tratamento de erro padronizado —
-/// não sabe nada sobre CNAB, conversão ou arquivos. Cada API client
-/// concreto (ILayoutConversaoApiClient, IGestorArquivosApiClient) herda
-/// isto e só implementa os métodos específicos do contrato.
+/// não sabe nada sobre planilhas, conversão ou arquivos. Cada API client
+/// concreto (hoje só <c>ILayoutConversaoApiClient</c>) herda isto e
+/// implementa os métodos específicos do seu contrato.
 /// </summary>
 public abstract class HttpApiClientBase(HttpClient httpClient)
 {
@@ -16,38 +16,34 @@ public abstract class HttpApiClientBase(HttpClient httpClient)
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    protected async Task<TResposta> PostJsonAsync<TCorpo, TResposta>(
-        string caminho, TCorpo corpo, CancellationToken ct)
-    {
-        using var resposta = await httpClient.PostAsJsonAsync(caminho, corpo, JsonOpcoes, ct);
-        resposta.EnsureSuccessStatusCode();
-
-        return await resposta.Content.ReadFromJsonAsync<TResposta>(JsonOpcoes, ct)
-            ?? throw new InvalidOperationException(
-                $"Resposta vazia de {httpClient.BaseAddress}{caminho}.");
-    }
-
-    protected async Task PostAsync<TCorpo>(string caminho, TCorpo corpo, CancellationToken ct)
-    {
-        using var resposta = await httpClient.PostAsJsonAsync(caminho, corpo, JsonOpcoes, ct);
-        resposta.EnsureSuccessStatusCode();
-    }
-
-    /// <summary>POST multipart/form-data com um campo de arquivo binário
-    /// ("file") mais campos de texto simples — contrato real da API de
-    /// conversão (<c>/v1/convert/sync|async/upload</c>), ver
-    /// docs/regras-de-negocio.md. Só o <see cref="MultipartFormDataContent"/>
-    /// externo precisa de <c>using</c>: ele descarta cada <see
-    /// cref="HttpContent"/> filho adicionado via <c>Add</c> sozinho.</summary>
+    /// <summary>
+    /// POST multipart/form-data com um campo de arquivo binário ("file")
+    /// mais campos de texto simples — contrato real da API de conversão
+    /// (<c>/v1/convert/async|sync/upload</c>), ver
+    /// docs/cash-cobranca-referencia.md §2.4.
+    ///
+    /// O <paramref name="contentType"/> é explícito porque o nome e o tipo
+    /// do arquivo são o que o pipeline usa pra saber que planilha recebeu:
+    /// <c>.xls</c> (formato binário antigo) e <c>.xlsx</c> (OOXML) são
+    /// formatos diferentes, não só extensões diferentes.
+    ///
+    /// Só o <see cref="MultipartFormDataContent"/> externo precisa de
+    /// <c>using</c>: ele descarta cada <see cref="HttpContent"/> filho
+    /// adicionado via <c>Add</c> sozinho.
+    /// </summary>
     protected async Task<TResposta> PostMultipartAsync<TResposta>(
-        string caminho, byte[] arquivo, string nomeArquivo,
-        IReadOnlyDictionary<string, string> camposExtras, CancellationToken ct)
+        string caminho,
+        byte[] arquivo,
+        string nomeArquivo,
+        string contentType,
+        IReadOnlyDictionary<string, string> camposExtras,
+        CancellationToken ct)
     {
         using var conteudo = new MultipartFormDataContent();
 
         var arquivoConteudo = new ByteArrayContent(arquivo);
         arquivoConteudo.Headers.ContentType =
-            new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+            new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
         conteudo.Add(arquivoConteudo, "file", nomeArquivo);
 
         foreach (var (chave, valor) in camposExtras)

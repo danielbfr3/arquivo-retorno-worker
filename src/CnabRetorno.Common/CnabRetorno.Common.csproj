@@ -6,7 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!--
-      Infra implementa contratos do domínio (IGestorArquivosApiClient) —
+      Infra implementa contratos do domínio (ILayoutConversaoApiClient) —
       a dependência vai de Common pra Core, nunca o contrário: Core não
       referencia nada.
     -->
@@ -14,19 +14,17 @@
   </ItemGroup>
   <ItemGroup>
     <!--
-      Sem mensageria: nenhum dos dois robôs consome fila — o Robô 1 é
-      ingestão pura e o Robô 2 usa o conversor síncrono. Se um consumidor
-      de fila voltar a existir, ele nasce aqui (Common), com todo nome de
-      fila vindo de configuração, nunca literal em código.
+      Sem mensageria: este worker não consome fila — ele entrega a planilha
+      ao conversor assíncrono e termina no aceite; quem trata a conclusão é
+      outro worker do ecossistema. Se um consumidor de fila passar a
+      existir, ele nasce aqui (Common), com todo nome de fila vindo de
+      configuração, nunca literal em código.
+
+      Sem SDK de storage: a planilha vai direto no multipart do conversor,
+      sem passar por bucket (ver docs/regras-de-negocio.md).
     -->
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
-    <!--
-      Storage/S3Storage.cs — alternativa ao Gestor de Arquivos, escolhida
-      por Storage:Modo. Usado pelos dois robôs, por isso mora aqui e não
-      duplicado em cada um.
-    -->
-    <PackageReference Include="AWSSDK.S3" Version="4.0.101.6" />
   </ItemGroup>
 </Project>

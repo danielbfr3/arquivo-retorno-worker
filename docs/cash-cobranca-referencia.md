@@ -6,20 +6,22 @@
 > shape da mensagem SQS). Trechos marcados 🆕 vêm dessas rodadas posteriores.
 > Projeto: `arquivo-retorno-worker` / Solution `CnabRetorno.slnx` / ERD `cash-cobranca_v3.erd`
 
-> **Escopo — o que os robôs atuais realmente consomem daqui:**
+> **Escopo — o que o worker atual realmente consome daqui:**
 >
-> - `Cobranca.Arquivo` e `Cobranca.Parametro` — mapeadas pelo **Robô 1**
->   (`RemessaVan.Worker/Persistencia/CobrancaDbContext.cs`).
-> - Contrato do **Gestor de Arquivos** (§3) — usado pelos dois robôs.
-> - Contrato do **conversor** (§2) — usado pelo Robô 2, no sentido JSON →
->   CNAB (a resposta do sentido inverso, documentada em §2.4, não é mais
->   desserializada por nenhum código).
+> - `Cobranca.Arquivo` — a única tabela mapeada
+>   (`ExcelCnab.Worker/Persistencia/CobrancaDbContext.cs`), e a única
+>   escrita: uma linha por planilha enviada.
+> - Contrato do **conversor** (§2.4) — só o endpoint **assíncrono**
+>   (`/v1/convert/async/upload`), com a planilha no campo `file`.
 >
-> As seções de `Titulo.*` e `Instrucao.*`, e todo o de-para de
-> `TituloConvertido`, pertencem ao fluxo de **retorno de cobrança**, que
-> não existe mais neste repositório. Ficam como referência do schema da
-> base — que continua real —, não como descrição do que o código faz.
-> Pra pagamentos, ver [`pagamento-referencia.md`](pagamento-referencia.md).
+> O que **não** é mais usado: `Cobranca.Parametro` (o worker não resolve
+> mais `ContaHeader` nem NSA), a API **Gestor de Arquivos** (§3 — a
+> planilha vai direto no multipart, sem passar por bucket), e o endpoint
+> síncrono de conversão. As seções de `Titulo.*`, `Instrucao.*` e o
+> de-para de `TituloConvertido` pertencem ao fluxo de retorno de cobrança,
+> que não existe neste repositório. Tudo isso fica como referência do
+> schema e dos contratos — que continuam reais —, não como descrição do
+> que o código faz.
 
 ---
 
@@ -51,12 +53,13 @@
 | 🆕 LayoutTipoArquivo | varchar | NULL | não usado por estes workers |
 | 🆕 ArquivoCnabID | uniqueidentifier | NULL | FK opcional pro CNAB de origem — não usado por estes workers |
 
-**Esta é a tabela que amarra os dois robôs.** O fluxo de entrada do
+**Esta é a tabela que amarra o worker ao resto do ecossistema.** O fluxo de entrada do
 ecossistema já funciona assim (cliente pede URL assinada → cria linha em
 `Arquivo` → manda `appId` + `Arquivo.Id` pro conversor), e o fluxo de
-retorno espelha isso: o Robô 1 cria a linha antes de enviar e usa o
-`ArquivoID` como `id` da conversão; a mensagem de conclusão devolve o
-mesmo `id`, e é por ele que o Robô 2 recupera o cliente. Confirmado com o
+fluxo deste worker é exatamente esse: ele cria a linha antes de enviar e
+usa o `ArquivoID` como `id` da conversão; a mensagem de conclusão devolve
+o mesmo `id`, e é por ele que quem a consome recupera o cliente e o nome
+do arquivo. Confirmado com o
 time dono da base em 24/07/2026 ("se for persistir na tabela Arquivo o
 arquivo retorno, entendo que seria o Arquivo.Id mesmo").
 
@@ -74,9 +77,10 @@ marcado `TODO(a-confirmar)` (ver `docs/riscos-conhecidos.md`).
 
 A entidade real impõe essa transição (`AtualizarStatus`/`AtualizarEtapa`
 lançam se a etapa não pertence ao status). Estes workers **não replicam**
-a validação — gravam direto os pares que usam: Robô 1 grava
-`EmProcessamento`/`EnviadoParaConversao` ao criar, Robô 2 grava
-`Processado`/`Registrado` ao concluir.
+a validação — grava direto os pares que usa: `EmProcessamento` /
+`EnviadoParaConversao` ao criar a linha, e `EmProcessamento` /
+`ArquivoInvalido` se o conversor recusar o arquivo. Quem consome a
+mensagem de conclusão é que leva a linha a `Processado`.
 
 #### Cobranca.ArquivoErro
 
@@ -121,6 +125,10 @@ Parâmetros de cobrança por cliente.
 
 ##### `SequencialAtual` — controle do sequencial de arquivo 🆕
 
+> **Não usado pelo worker atual** — ele não gera CNAB nem monta header, e
+> portanto não toca neste contador. Fica documentado porque a coluna é
+> real e o ecossistema depende dela.
+
 A série de sequencial é **compartilhada entre remessa e retorno** do mesmo
 cliente: o banco recebe a remessa 1, envia o retorno 2, recebe a remessa
 3, e assim por diante. Cada arquivo que entra ou sai incrementa o
@@ -130,7 +138,7 @@ Normalmente o core bancário já manda o sequencial correto no header do arquivo
 V — mas se um arquivo precisar ser **regerado**, o número que vem no V
 está errado (é o da remessa original). Por isso o retorno nunca reaproveita
 o sequencial do V: antes de enviar o JSON pro conversor assíncrono, o
-Robô 1 incrementa `SequencialAtual` e **substitui** o valor nos dois
+o robô de retorno incrementava `SequencialAtual` e **substituía** o valor nos dois
 campos de sequencial do JSON (`arquivo.numeroSequencialArquivo` e
 `lote.numeroRemessaRetorno` — o CNAB carrega o mesmo número nos dois
 headers).
@@ -495,7 +503,8 @@ upload de arquivo**, não JSON body:
   resultado chega depois via SQS (ver shape abaixo).
 - **`id` é o `Cobranca.Arquivo.ArquivoID`** (Guid) — não um GUID
   descartável. É ele que a mensagem de conclusão devolve, permitindo ao
-  Robô 2 recuperar cliente/nome do arquivo direto da tabela.
+  quem consome a conclusão recuperar cliente/nome do arquivo direto da
+  tabela.
 
 #### Mensagem SQS de conclusão 🆕 (observada em 24/07/2026)
 

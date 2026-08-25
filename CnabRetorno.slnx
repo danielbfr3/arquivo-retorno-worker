@@ -2,8 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/CnabRetorno.Common/CnabRetorno.Common.csproj" />
     <Project Path="src/CnabRetorno.Core/CnabRetorno.Core.csproj" />
-    <Project Path="src/CnabRetorno.RemessaVan.Worker/CnabRetorno.RemessaVan.Worker.csproj" />
-    <Project Path="src/CnabRetorno.PagamentoRetorno.Worker/CnabRetorno.PagamentoRetorno.Worker.csproj" />
+    <Project Path="src/CnabRetorno.ExcelCnab.Worker/CnabRetorno.ExcelCnab.Worker.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CnabRetorno.Tests/CnabRetorno.Tests.csproj" />

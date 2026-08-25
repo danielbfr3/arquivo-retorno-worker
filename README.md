@@ -1,43 +1,47 @@
 # arquivo-retorno-worker
 
-Dois workers .NET 10, independentes entre si:
+Worker .NET 10 que varre uma pasta de planilhas, identifica o cliente dono
+de cada uma e entrega o arquivo ao conversor de layout, que gera o CNAB.
 
-| Robô | Projeto | O que faz |
-|---|---|---|
-| **1** | `CnabRetorno.RemessaVan.Worker` | Varre a pasta onde as VANs depositam remessas CNAB, renomeia no padrão ASA, guarda no Gestor de Arquivos (ou no S3) e registra em `Cobranca.Arquivo`. |
-| **2** | `CnabRetorno.PagamentoRetorno.Worker` | Das 7h às 18h, gera arquivos de retorno de pagamentos — parciais de hora em hora e um consolidado no fim do dia —, guardados e registrados em `Pagamento.Arquivo`. CNAB via conversor externo (padrão) ou escrito pelo próprio robô, ver `Geracao:Modo`. |
+| Etapa | O que acontece |
+|---|---|
+| 1 | Varre a pasta de entrada (diretório local em dev, compartilhamento **SMB** em hml/prd) |
+| 2 | Lê o CNPJ do nome do arquivo — `Simplificado_<cnpj>.xlsx` ou `.xls` |
+| 3 | Busca o cliente na base de **adesão** pra pegar a razão social |
+| 4 | Cria a linha do arquivo em `Cobranca.Arquivo`, com um `ArquivoID` novo |
+| 5 | Envia a planilha ao **conversor assíncrono** — pipeline `excel-cnab`, appId `cash-cobranca` —, com CNPJ e razão social em JSON no corpo da mensagem |
+| 6 | Move o arquivo pra `Backup` (ou pra `Quarentena`, se algo falhou) |
 
-Os dois não conversam. Compartilham `CnabRetorno.Core` (domínio e
-contratos, zero dependência externa) e `CnabRetorno.Common`
-(infraestrutura: HTTP e storage).
+A planilha **não é aberta** em momento nenhum: o CNPJ vem do nome e o
+conteúdo é repassado como bytes opacos pro pipeline, que é quem entende o
+formato. Por isso não há biblioteca de Excel no projeto.
+
+O robô termina no aceite do conversor. A conclusão da conversão chega
+depois por fila, correlacionada pelo `ArquivoID`, e é tratada por outro
+worker do ecossistema.
 
 ## Estrutura
 
 ```
 src/
   CnabRetorno.Core/                 domínio + contratos (sem PackageReference)
-    Aplicacao/                      interfaces e DTOs das APIs externas
-    Cnab240/                        leitura posicional do layout FEBRABAN 240
-    Dominio/                        Arquivo, MovimentacaoPagamento, enums
+    Aplicacao/                      interface e DTOs da API de conversão
+    Dominio/                        Arquivo, EmpresaAdesao, enums de status
   CnabRetorno.Common/               infra compartilhada
-    Http/                           base HTTP + client do Gestor de Arquivos
-    Storage/                        upload via presigned URL ou S3 direto
-  CnabRetorno.RemessaVan.Worker/    Robô 1
-    Vans/                           máscaras das VANs, nome padrão ASA
-    Origem/                         pasta de entrada, backup, quarentena
-    Persistencia/                   CASH_COBRANCA
-    Pipeline/
-  CnabRetorno.PagamentoRetorno.Worker/  Robô 2
-    Agendamento/                    grade de janelas 7h–18h
-    Persistencia/                   ASA_CASH_PAGAMENTO (UNION dos 5 meios) + ASA_CASH_ADESAO
-    Json/                           parse da remessa gravada + montagem do JSON
-    Cnab/                           gerador de CNAB: via conversor ou direto (Geracao:Modo)
-    Http/                           conversor síncrono
-    Pipeline/
+    Http/                           base HTTP (multipart + JSON)
+  CnabRetorno.ExcelCnab.Worker/     o worker
+    Origem/                         pasta de entrada, backup, quarentena, leitura do nome
+    Persistencia/                   CASH_COBRANCA + base de adesão + lock entre réplicas
+    Http/                           client do conversor de layout
+    Pipeline/                       varredura e processamento de um arquivo
 tests/CnabRetorno.Tests/
-deploy/                             DDL da tabela de controle + setup local
 docs/
 ```
+
+`Core` e `Common` continuam separados do worker de propósito: `Core`
+modela o futuro `arquivo-core-lib` (domínio e contratos, zero dependência
+externa) e `Common` é a infraestrutura que um segundo worker da família
+reusaria.
 
 ## Rodando
 
@@ -45,81 +49,67 @@ docs/
 dotnet build CnabRetorno.slnx
 dotnet test  CnabRetorno.slnx
 
-dotnet run --project src/CnabRetorno.RemessaVan.Worker
-dotnet run --project src/CnabRetorno.PagamentoRetorno.Worker
+dotnet run --project src/CnabRetorno.ExcelCnab.Worker
 ```
+
+Pra experimentar localmente sem SQL Server nem o conversor, veja
+`deploy/setup-local.sh` — ele sobe as duas bases vazias e deixa uma
+planilha de exemplo na pasta de entrada.
 
 Não há SQL Server nem as APIs externas neste ambiente — a verificação
 possível é build + testes de unidade. Os testes cobrem as partes puras
-(máscaras, nomenclatura, grade de janelas, montagem do JSON, parse do CNAB
-gravado) e a construção do modelo EF, que valida o mapeamento sem abrir
+(leitura do nome do arquivo, JSON enviado ao conversor, envelope de
+resposta) e a construção do modelo EF, que valida o mapeamento sem abrir
 conexão.
 
 ## Configuração
 
 Tudo que é nome de recurso de infra é configuração — pasta de origem,
-bucket, prefixo, base URLs, AppIDs, templates de nome, horários. Nada
-literal em código. Em cluster, sobrescrever por variável de ambiente com
-`__` no lugar de `:` (ex.: `Storage__S3__Bucket`).
-
-### Robô 1 — o essencial
+máscara do nome, base URL, AppID, nome do pipeline. Nada literal em
+código. Em cluster, sobrescrever por variável de ambiente com `__` no
+lugar de `:` (ex.: `Origem__Pasta`).
 
 | Chave | Para quê |
 |---|---|
-| `Origem:Pasta` | Pasta das VANs (SMB montado no pod em produção) |
-| `Origem:SegundosEstabilidade` | Ignora arquivo ainda sendo gravado |
-| `Vans:Mascaras` | Máscaras por VAN — ver `docs/regras-de-negocio.md` |
-| `Nomenclatura:Template` | Padrão ASA, com tokens |
-| `Storage:Modo` | `GestorArquivos` (padrão) ou `S3` |
-| `Storage:S3:Bucket` / `Prefixo` | Destino no modo S3 |
+| `Origem:Pasta` | Pasta de entrada (ponto de montagem do SMB em hml/prd) |
+| `Origem:SegundosEstabilidade` | Ignora arquivo ainda sendo copiado pra pasta |
+| `Nomenclatura:Mascara` | Máscara do nome, com o token `{cnpj}` — padrão `Simplificado_{cnpj}` |
+| `Nomenclatura:Extensoes` | Extensões aceitas — padrão `.xlsx` e `.xls` |
+| `Conversao:Pipeline` | Pipeline do conversor — `excel-cnab` |
+| `Conversao:AppId` | AppID da chamada — `cash-cobranca` |
+| `Conversao:CampoMetadados` | Campo do multipart que leva o JSON do cliente (**em aberto**) |
+| `LayoutConversaoApi:BaseUrl` | Base URL do conversor (**em aberto**) |
+| `RegistroArquivo:AppId` / `CriadoPor` | O que é gravado na linha de `Cobranca.Arquivo` |
+| `Worker:Modo` / `Cron` | `Loop` (residente, com cron interno) ou `CronJob` (roda e encerra) |
+| `Pipeline:MaxArquivosConcorrentes` | Quantos arquivos em paralelo — um escopo de DI por arquivo |
 | `ConnectionStrings:Cobranca` | CASH_COBRANCA |
-
-### Robô 2 — o essencial
-
-| Chave | Para quê |
-|---|---|
-| `Janela:HoraInicio` / `HoraFim` / `IntervaloParcial` | Grade de geração |
-| `Janela:FusoHorario` | Sem isso, o "arquivo das 7h" sai às 4h num pod em UTC |
-| `Janela:TimestampsBancoEmUtc` | Em que fuso a base grava os timestamps (**em aberto** — errado desloca o corte em 3h) |
-| `Geracao:Modo` | `Conversor` (padrão) ou `CnabDireto` — ver `docs/pagamento-referencia.md` §6 |
-| `Conversao:Pipeline` | Pipeline do conversor (**em aberto**, só usado em `Geracao:Modo=Conversor`) |
-| `ConnectionStrings:Adesao` | ASA_CASH_ADESAO — só usada em `Geracao:Modo=CnabDireto` (**schema inteiro em aberto**) |
-| `Retorno:CodigoBanco` / `TipoServico` | Header do arquivo |
-| `Storage:Modo` | `GestorArquivos` (padrão) ou `S3` |
-| `ConnectionStrings:Pagamento` | ASA_CASH_PAGAMENTO |
+| `ConnectionStrings:Adesao` | Base de adesão (**schema inteiro em aberto**) |
 
 ## Antes de homologação
 
-O código roda, mas há dados de integração que ninguém confirmou ainda.
-Estão marcados com `TODO(a-confirmar)` e listados em
+O código roda, mas há dados de integração que ninguém confirmou. Estão
+marcados com `TODO(a-confirmar)` e listados em
 [`docs/regras-de-negocio.md`](docs/regras-de-negocio.md#em-aberto). Os
 mais críticos:
 
-- **Nome do pipeline** de conversão de pagamentos — sem ele o conversor
-  rejeita a chamada.
-- **Shape do JSON de pagamentos** — é proposta derivada do layout
-  FEBRABAN, não contrato observado.
-- **Schema de `Pagamento.Arquivo` e `Pagamento.Parametro`** — não
-  capturados; mapeados como espelho dos de cobrança.
+- **Schema da base de adesão** — nome de schema, tabela e colunas são
+  chute; a base nunca foi inspecionada. É caminho crítico de **todo**
+  arquivo: sem razão social nada é enviado.
+- **Nome do campo de metadados** no multipart — `metadata` é suposição. Um
+  campo que o conversor não conhece é ignorado em silêncio, e o upload
+  ainda assim é aceito.
 - **Valores numéricos de `ArquivoStatus`/`ArquivoEtapa`** — os nomes são
   reais, os números são suposição, e a tabela é compartilhada com o
   ecossistema CASH inteiro.
-- **Fuso dos timestamps de `ASA_CASH_PAGAMENTO`** — `Janela:TimestampsBancoEmUtc`
-  corrige com uma chave, mas precisa da resposta do time dono da base.
-- **Schema de `ASA_CASH_ADESAO` inteiro** (só se `Geracao:Modo=CnabDireto`
-  for ativado) — base nunca inspecionada; nome de tabela e todas as
-  colunas de `EmpresaAdesao` são chute. Ver
-  [`docs/pagamento-referencia.md`](docs/pagamento-referencia.md#6-modo-cnabdireto--o-robô-escreve-o-cnab-sem-passar-pelo-conversor) §6.
+- **Base URL e autenticação** do conversor.
 
 ## Documentação
 
-- [`docs/regras-de-negocio.md`](docs/regras-de-negocio.md) — o que cada
-  robô faz, com diagramas e o porquê de cada decisão.
-- [`docs/pagamento-referencia.md`](docs/pagamento-referencia.md) —
-  de-para entre `ASA_CASH_PAGAMENTO` e o layout FEBRABAN 240.
-- [`docs/cash-cobranca-referencia.md`](docs/cash-cobranca-referencia.md) —
-  schema do CASH_COBRANCA e contratos das APIs externas.
+- [`docs/regras-de-negocio.md`](docs/regras-de-negocio.md) — o que o robô
+  faz, com diagrama e o porquê de cada decisão.
 - [`docs/riscos-conhecidos.md`](docs/riscos-conhecidos.md) — auditoria de
   riscos de comportamento.
+- [`docs/cash-cobranca-referencia.md`](docs/cash-cobranca-referencia.md) —
+  schema do CASH_COBRANCA e contratos das APIs externas.
 - [`docs/conceitos-dotnet-ef-core.md`](docs/conceitos-dotnet-ef-core.md) —
   como o código usa .NET e EF Core.

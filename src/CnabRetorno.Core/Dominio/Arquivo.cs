@@ -1,14 +1,13 @@
 namespace CnabRetorno.Core.Dominio;
 
 /// <summary>
-/// Status do arquivo (smallint no banco), em <c>Cobranca.Arquivo</c> e
-/// <c>Pagamento.Arquivo</c>.
+/// Status do arquivo (smallint no banco), em <c>Cobranca.Arquivo</c>.
 ///
 /// TODO(a-confirmar): os **nomes** vêm da entidade real da cash-cobranca-api
 /// (extração de 24/07/2026), mas os **valores numéricos** não foram
 /// fornecidos — os de baixo são suposição. Gravar o número errado numa
 /// tabela compartilhada por todo o ecossistema CASH corrompe o
-/// rastreamento de arquivo dos outros sistemas, não só destes workers (ver
+/// rastreamento de arquivo dos outros sistemas, não só deste worker (ver
 /// docs/riscos-conhecidos.md).
 /// </summary>
 public enum ArquivoStatus : short
@@ -32,32 +31,21 @@ public enum ArquivoEtapa : short
 }
 
 /// <summary>
-/// Projeção de escrita/leitura da tabela de arquivos. A mesma classe serve
-/// às duas bases porque as duas tabelas têm a mesma forma:
-///
-/// <list type="bullet">
-///   <item><c>Cobranca.Arquivo</c> na base CASH_COBRANCA (schema real em
-///   docs/cash-cobranca-referencia.md §1.1) — escrita pelo Robô 1 ao
-///   ingerir uma remessa de VAN.</item>
-///   <item><c>Pagamento.Arquivo</c> na base ASA_CASH_PAGAMENTO — escrita
-///   pelo Robô 2 ao gerar um arquivo de retorno de pagamentos.
-///   TODO(a-confirmar): o schema desta segunda tabela **não** foi
-///   capturado na extração de 03/08/2026 (a lista de tabelas a mostra,
-///   mas as colunas não foram fotografadas). Está mapeada aqui como
-///   espelho da de cobrança; conferir antes de subir pra homologação.</item>
-/// </list>
+/// Projeção de escrita/leitura de <c>Cobranca.Arquivo</c>, na base
+/// CASH_COBRANCA (schema real em docs/cash-cobranca-referencia.md §1.1) —
+/// a linha que o worker cria pra cada planilha antes de entregá-la ao
+/// conversor.
 ///
 /// A entidade **rica** (com a máquina de estados
 /// <c>EtapasPermitidasPorStatus</c> e os métodos que impõem transição
 /// válida) mora na API dona da tabela. Aqui é de propósito só uma projeção
-/// mínima dos campos que estes workers usam — não replicamos as
-/// invariantes pra não ter duas fontes de verdade divergindo com o tempo.
+/// mínima dos campos que este worker usa — não replicamos as invariantes
+/// pra não ter duas fontes de verdade divergindo com o tempo.
 ///
-/// Diferente das demais projeções deste projeto, esta entidade **tem
-/// chave** (<see cref="ArquivoID"/>) — é a única que é escrita, não só
-/// lida. O <see cref="ArquivoID"/> é também o identificador do objeto no
-/// Gestor de Arquivos: um id só em toda a cadeia (registro, storage,
-/// conversão), nunca um GUID novo por chamada.
+/// A entidade **tem chave** (<see cref="ArquivoID"/>) porque é escrita, não
+/// só lida. O <see cref="ArquivoID"/> é também o <c>id</c> da conversão: um
+/// id só em toda a cadeia (registro, conversão, mensagem de conclusão),
+/// nunca um GUID novo por chamada.
 /// </summary>
 public class Arquivo
 {

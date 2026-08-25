@@ -1,23 +1,21 @@
-# Dependências locais dos dois robôs.
+# Dependências locais do worker.
 #
-# - cobranca-sqlserver:  emula a base CASH_COBRANCA (Robô 1)
-# - pagamento-sqlserver: emula a base ASA_CASH_PAGAMENTO (Robô 2)
+# - cobranca-sqlserver: emula a base CASH_COBRANCA (Cobranca.Arquivo)
+# - adesao-sqlserver:   emula a base de adesão (razão social do cliente)
 #
 # Azure SQL Edge em vez do SQL Server "real" pra funcionar em ARM64
 # (Apple Silicon); mesmo protocolo T-SQL.
 #
-# As APIs externas (Gestor de Arquivos e conversor de layout) não têm
-# emulação local — apontam pro ambiente de homologação real, e as base
-# URLs em appsettings.json ainda estão como TODO(a-confirmar).
+# A API de conversão não tem emulação local — aponta pro ambiente de
+# homologação real, e a base URL em appsettings.json ainda está como
+# TODO(a-confirmar).
 #
-# Nenhum robô tem banco próprio: as duas bases são de outros times. A
-# única tabela criada por este projeto é Pagamento.ControleJanelaRetorno
-# (ver deploy/pagamento-controle-janela.sql).
+# As duas bases são de outros times: o worker não cria nem migra nenhuma
+# tabela.
 #
 # Uso:
 #   docker compose -f docker-compose.local.yml up -d
-#   dotnet run --project src/CnabRetorno.RemessaVan.Worker
-#   dotnet run --project src/CnabRetorno.PagamentoRetorno.Worker
+#   dotnet run --project src/CnabRetorno.ExcelCnab.Worker
 #
 services:
   cobranca-sqlserver:
@@ -31,13 +29,13 @@ services:
     volumes:
       - ./.cobranca-sqlserver-data:/var/opt/mssql
 
-  pagamento-sqlserver:
+  adesao-sqlserver:
     image: mcr.microsoft.com/azure-sql-edge:latest
-    container_name: cnab-pagamento-sqlserver
+    container_name: cnab-adesao-sqlserver
     ports:
       - "1434:1433"
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "Dev12345!"
     volumes:
-      - ./.pagamento-sqlserver-data:/var/opt/mssql
+      - ./.adesao-sqlserver-data:/var/opt/mssql

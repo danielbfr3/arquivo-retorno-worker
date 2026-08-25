@@ -1,14 +1,14 @@
 # Segunda fonte de dados: código do cliente no core bancário via EF Core (SQL Server)
 
 > **Nota:** escrito para uma arquitetura de projeto único
-> (`CnabRetorno.Worker`) anterior aos robôs atuais. O padrão descrito
+> (`CnabRetorno.Worker`) anterior ao worker atual. O padrão descrito
 > abaixo — projeção sem chave sobre banco de outro time, sem migrations,
 > tracking desligado — está implementado de verdade em
-> `src/CnabRetorno.RemessaVan.Worker/Persistencia/CobrancaDbContext.cs`
+> `src/CnabRetorno.ExcelCnab.Worker/Persistencia/CobrancaDbContext.cs`
 > (base CASH_COBRANCA) e em
-> `src/CnabRetorno.PagamentoRetorno.Worker/Persistencia/PagamentoDbContext.cs`
-> (base ASA_CASH_PAGAMENTO, com o `UNION ALL` das cinco duplas de meio de
-> pagamento).
+> `src/CnabRetorno.ExcelCnab.Worker/Persistencia/AdesaoDbContext.cs`
+> (base de adesão) — duas bases de outros times no mesmo worker, cada uma
+> com seu `DbContext`.
 >
 > Mantido como referência conceitual; caminhos de arquivo abaixo
 > (`src/CnabRetorno.Worker/...`) e entidades citadas

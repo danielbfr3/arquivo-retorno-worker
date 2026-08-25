@@ -5,18 +5,9 @@ Diferente da seção [Em aberto](regras-de-negocio.md#em-aberto), que lista
 lugares onde o código roda sem erro e mesmo assim produz o resultado
 errado.
 
-É processamento bancário — um arquivo entregue ao cliente não tem
-desfazer. Cada item diz o cenário concreto, o impacto e a decisão tomada.
-
-**Corrigidos na rodada de 03/08/2026** (mantidos fora da lista): buraco
-pós-18h (dia útil virou consolidado→consolidado), PIX QR-Code sem chave
-no detalhe, título rejeitado com valor de pagamento preenchido,
-re-report por UPDATE sem mudança de status (pares reportados), ausência
-de idempotência por conteúdo no Robô 1 (MD5 em banco), réplicas
-concorrentes (lock `sp_getapplock`), sobrescrita na quarentena (sufixo de
-timestamp), compensação mascarando a exceção original, e `SqlQuery` com
-`UPDATE...OUTPUT` (trocado por ADO puro — o embrulho em subselect do EF
-estouraria em runtime).
+É processamento bancário — um CNAB gerado a partir da planilha errada não
+tem desfazer. Cada item diz o cenário concreto, o impacto e a decisão
+tomada.
 
 ---
 
@@ -28,241 +19,171 @@ Os **nomes** dos estados vêm da entidade real da cash-cobranca-api; os
 **valores numéricos** (smallint no banco) nunca foram fornecidos. O enum
 em `Core/Dominio/Arquivo.cs` assume `1..N` na ordem em que aparecem.
 
-**Cenário:** o Robô 1 grava `ArquivoStatus = 2` querendo dizer
-"EmProcessamento", mas na tabela `2` significa "Processado". O arquivo de
-remessa é dado como concluído sem nunca ter sido convertido, e o worker de
-conversão nunca o pega.
+**Cenário:** o robô grava `ArquivoStatus = 2` querendo dizer
+"EmProcessamento", mas na tabela `2` significa "Processado". A planilha é
+dada como concluída sem que a conversão tenha terminado.
 
-**Impacto:** `Cobranca.Arquivo` e `Pagamento.Arquivo` são compartilhadas
-com o ecossistema CASH inteiro. Gravar o número errado corrompe o
-rastreamento de arquivo dos outros sistemas, não só destes workers.
+**Impacto:** `Cobranca.Arquivo` é compartilhada com o ecossistema CASH
+inteiro. Gravar o número errado corrompe o rastreamento de arquivo dos
+outros sistemas, não só deste worker.
 
-**Decisão:** implementado com os valores supostos e `TODO(a-confirmar)` em
-três lugares. Confirmar antes de qualquer deploy.
-
----
-
-## 2. `CodigoOcorrencia` pode não ser FEBRABAN
-
-`CodigoOcorrencia varchar(10)` tem exatamente a largura do campo G059, o
-que é forte indício de que já é gravado no formato de destino. O robô
-confia nisso e o copia direto pro arquivo.
-
-**Cenário:** o campo é um código interno de mesma largura. O cliente
-recebe um retorno com ocorrências que o parser dele não reconhece — ou,
-pior, que ele reconhece como outra coisa.
-
-**Decisão:** o código gravado prevalece; o mapeamento por status é
-fallback. Se for interno, falta uma tabela de-para em
-`Core/Dominio/StatusPagamento.cs` — um único ponto de mudança.
+**Decisão:** implementado com os valores supostos e `TODO(a-confirmar)`.
+Confirmar antes de qualquer deploy.
 
 ---
 
-## 3. `Rejeitado` e `Erro` sem código gravado saem em branco
+## 2. Schema da base de adesão é placeholder completo
 
-Não existe ocorrência genérica de "rejeitado" no G059 — os códigos são
-todos específicos do motivo (`AE` inscrição inválida, `AG` conta inválida,
-`CD` valor inválido…).
+**Bloqueante pra produção.**
 
-**Cenário:** um pagamento rejeitado cujo `CodigoOcorrencia` veio vazio
-entra no arquivo com as 10 posições em branco. O cliente vê o registro,
-não vê o motivo.
+`AdesaoDbContext` mapeia `Adesao.Empresa` com colunas `Documento` e
+`RazaoSocial` — nome de schema, de tabela e de coluna são chute; a base
+nunca foi inspecionada.
 
-**Decisão:** brancos, conscientemente. Inventar um código erraria o
-motivo, o que é pior que não informá-lo. As tabelas `<Tipo>Erro` têm
-`CodigoOcorrenciaErro` e poderiam preencher essa lacuna — não foram
-integradas porque não se sabe se seguem o domínio FEBRABAN (ver risco 2).
+**Cenário:** o mapeamento não bate com o schema real. A primeira consulta
+estoura em runtime, no cluster — o EF só abre conexão na primeira query, e
+`ModeloEfTests` valida o modelo, não o schema do servidor.
 
----
+**Impacto:** maior que no design anterior, onde a base de adesão só era
+usada num modo opcional. Aqui ela é **caminho crítico de todo arquivo**:
+sem razão social nenhuma planilha é enviada, e a pasta acumula quarentena
+silenciosamente enquanto o log grita.
 
-## 4. Objeto órfão no storage quando o registro falha (Robô 1)
-
-O checklist manda guardar (passos 6-7) antes de registrar (passo 9). Se o
-`INSERT` falhar, o objeto já está no bucket sem linha no banco.
-
-**Cenário:** SQL Server indisponível por 30 segundos. O arquivo subiu, a
-linha não existe, e nenhum worker de conversão vai pegá-lo.
-
-**Decisão:** o arquivo vai pra **quarentena** (não backup, não fica na
-origem) e o log carrega `ArquivoID` + referência do objeto, pra que dê pra
-limpá-lo ou completar o registro à mão. Backup faria o arquivo sumir da
-vista com o registro faltando; deixar na origem faria o próximo ciclo
-gravar um **segundo** objeto com GUID novo.
-
-**Alternativa não adotada:** registrar antes e compensar com `DELETE`
-(padrão do Robô 2). Foge da ordem do checklist, que descreve o fluxo já
-acordado com o time.
+**Decisão:** um único ponto de ajuste (`AdesaoDbContext.OnModelCreating` +
+`Core/Dominio/EmpresaAdesao.cs`). Conferir antes de subir pra homologação.
 
 ---
 
-## 5. NSA consumido por arquivo que falha (Robô 2)
+## 3. Cliente sem razão social barra o envio
 
-O sequencial é reservado antes da conversão. Se a conversão ou o upload
-falharem, o número já foi consumido e a série do cliente fica com um
-buraco.
+**Decisão consciente, com efeito colateral conhecido.**
 
-**Cenário:** conversor fora do ar numa janela. O cliente recebe os
-arquivos com NSA 41 e 43; o 42 nunca existiu.
+Se o CNPJ não está na base de adesão — ou está com a razão social vazia —
+a planilha vai pra quarentena e **não** é enviada.
 
-**Decisão:** aceito. Repetir um NSA é pior que pular um — o cliente usa
-esse número justamente pra detectar arquivo repetido.
+**Cenário:** cliente novo, planilha depositada antes de o cadastro de
+adesão existir. O arquivo fica parado na quarentena até alguém notar.
 
----
+**Alternativa descartada:** enviar com razão social vazia. O JSON é
+contrato com o conversor, e um arquivo identificado pela metade é pior que
+um arquivo não enviado — a quarentena é visível, um CNAB com dado faltando
+não é.
 
-## 6. Marca d'água avançada com o arquivo já entregue
-
-A marca d'água e os pares reportados são atualizados **depois** de o
-arquivo existir. Se o processo morrer entre "marcar Registrado" e o
-registro do controle, o próximo parcial reenvia as mesmas movimentações.
-
-**Cenário:** pod reiniciado no instante exato. O cliente recebe as mesmas
-movimentações em dois arquivos parciais consecutivos.
-
-**Decisão:** deliberado, nessa ordem. Duplicar é recuperável (o cliente
-concilia por `SeuNumero`); perder não. A ordem inversa (controle antes do
-arquivo) faria uma falha de conversão descartar movimentações pra sempre.
-A janela dessa corrida é de milissegundos — e os pares reportados
-reduziram o caso mais provável de reenvio (UPDATE sem mudança de status)
-a não-evento.
+**Mitigação:** o log sai como **erro** (não aviso), com CNPJ e nome do
+arquivo. Reprocessar é mover o arquivo de volta pra pasta de entrada.
 
 ---
 
-## 7. Atribuição de VAN é ambígua
+## 4. Nome do campo de metadados não foi confirmado
 
-Todas as máscaras de remessa compartilham o prefixo `CB<cnpj>`. Duas VANs
-diferentes podem casar o mesmo nome de arquivo; vence a primeira da lista.
+O contrato registrado em `cash-cobranca-referencia.md` §2.4 lista só
+`file`, `appId`, `pipeline` e `id`. O campo que carrega o JSON com CNPJ e
+razão social é `metadata` **por suposição**.
 
-**Impacto:** baixo. A VAN só alimenta o token `{van}` do nome ASA, que o
-template padrão não usa, e não afeta cliente, storage nem registro.
+**Cenário:** o conversor ignora um campo que não conhece. O upload é
+aceito (`status: pending`), o robô registra sucesso, e o CNAB sai sem os
+dados do cliente — ou o pipeline falha lá adiante, longe daqui.
 
-**Decisão:** máscaras ordenadas da mais específica pra mais genérica no
-`appsettings`, com o raciocínio registrado ali.
+**Impacto:** falha silenciosa do ponto de vista deste worker: o aceite não
+diz nada sobre o que o pipeline fez com os campos.
 
----
-
-## 8. `Linhas` como fonte de verdade depende de ele estar preenchido
-
-A montagem do retorno prefere os segmentos gravados da remessa. Quando
-`Linhas` vem vazio, cai nas colunas — e o resultado pode divergir do que o
-cliente enviou (nome truncado de outro jeito, conta sem zeros à esquerda).
-
-**Cenário:** pagamentos criados por API (não por arquivo) não têm
-`Linhas`. O retorno desses registros sai normalizado do jeito do nosso
-banco.
-
-**Decisão:** aceito. Não há de onde tirar o original quando ele não
-existe. Coberto por teste (`Sem_linhas_deve_cair_nas_colunas`).
+**Decisão:** `Conversao:CampoMetadados` é configuração — corrigir é mudar
+uma chave, não código. Confirmar com o time do conversor antes de
+homologar.
 
 ---
 
-## 9. Sem recuperação de janela perdida (Robô 2)
+## 5. Retry automático reenvia o POST
 
-Se o worker estiver fora do ar às 9h, o parcial das 9h não acontece e não
-é gerado depois.
+`AddStandardResilienceHandler()` faz retry de falhas transitórias. Num
+POST que cria trabalho do outro lado, isso é reenvio.
 
-**Impacto:** baixo por desenho — a marca d'água é contínua por cliente,
-então o parcial seguinte leva tudo que ficou pra trás, inclusive através
-da virada do dia útil (18h→18h).
+**Cenário:** o conversor recebe o upload, processa, e a resposta se perde
+na rede. O handler repete o POST; o conversor recebe a mesma planilha duas
+vezes.
 
-**Exceção:** se o worker ficar fora do ar **das 17h às 18h01**, o
-consolidado do dia não sai — e o consolidado do dia seguinte **não** o
-substitui (cobre outro dia útil). As movimentações não se perdem (vão nas
-parciais seguintes), mas o arquivo de fechamento daquele dia precisa de
-reexecução manual.
+**Mitigação:** o `id` é sempre o mesmo `ArquivoID` em todas as tentativas
+— é o que permite ao outro lado reconhecer a repetição. Não é garantia de
+idempotência do conversor, que não foi confirmada.
 
 ---
 
-## 10. `PutArquivoAsync` do client oficial usa `new HttpClient()`
+## 6. Duas planilhas do mesmo cliente em ciclos diferentes
 
-Observado no `GestorArquivosClient.cs` da Common da empresa (extração de
-03/08/2026): o método de PUT instancia `HttpClient` direto, sem
-`IHttpClientFactory` — risco clássico de esgotamento de sockets em alto
-volume.
+Não há deduplicação por conteúdo. O que evita reprocessar o mesmo arquivo
+é ele sair da pasta (Backup) ao fim do ciclo.
 
-**Não afeta este repositório:** os dois robôs usam `AddHttpClient<>` com
-`AddStandardResilienceHandler()`. Fica registrado como alerta pra quem for
-reutilizar aquele client.
+**Cenário:** o mesmo arquivo é depositado de novo, com o mesmo nome e o
+mesmo conteúdo. Vira um segundo envio, com `ArquivoID` novo.
 
----
-
-## 11. Cliente com mais de uma conta na mesma janela
-
-A granularidade decidida é **um arquivo por cliente**, e o header do CNAB
-só carrega uma conta. Um cliente com movimentações em duas
-`ClienteContaHeader` no mesmo dia sai num arquivo só, debaixo da primeira
-conta encontrada.
-
-**Cenário:** cliente com conta em duas agências paga por TEF numa e por
-boleto na outra. As duas movimentações saem sob a mesma conta no header.
-
-**Decisão:** `MovimentacoesRepository.ResolverContaHeader` **loga aviso**
-com as contas envolvidas em vez de escolher em silêncio. Se o caso
-aparecer de verdade em produção, é sinal de que a granularidade precisa
-virar cliente+conta — mudança de agrupamento, não de montagem.
+**Decisão consciente:** o robô anterior tinha uma tabela de MD5 porque as
+VANs retransmitiam automaticamente. Aqui quem deposita é uma pessoa, e um
+depósito repetido é mais provavelmente uma correção do que uma
+retransmissão — deduplicar por conteúdo faria o robô **ignorar** um reenvio
+intencional. Se o cenário mudar, o padrão anterior (hash em banco, gravado
+depois da ingestão completa) é o caminho.
 
 ---
 
-## 12. Testes não cobrem o caminho de I/O
+## 7. Crash entre o INSERT e o envio
 
-Os testes cobrem lógica pura e o modelo EF. Nada exercita banco real,
-Gestor de Arquivos, conversor ou pasta SMB — não há esses recursos neste
-ambiente.
+A linha em `Cobranca.Arquivo` é criada antes da chamada ao conversor. Se o
+pod morrer entre as duas, a linha fica como `EnviadoParaConversao` sem que
+nada tenha sido enviado.
 
-**O que fica descoberto:** a consulta `UNION ALL` das cinco duplas de
-tabelas nunca rodou contra o schema real. Um nome de coluna errado só
-aparece em runtime. O teste de modelo EF pega mapeamento inconsistente,
-mas não valida que as colunas existem no banco.
+**Cenário:** linha pendurada esperando uma conclusão que nunca chega, e o
+arquivo continua na pasta de entrada — o próximo ciclo cria uma **segunda**
+linha, com `ArquivoID` novo, e envia.
 
-**Mitigação:** primeiro teste em homologação deve ser uma janela com
-`Janela:IntervaloParcial` curto e a base real, olhando o log. Os pontos
-de maior atenção nesse primeiro contato: o `UNION ALL` das cinco duplas,
-a reserva de NSA e o `sp_getapplock` (os três em SQL/ADO cru, sem teste
-de integração).
+**Impacto:** uma linha órfã no banco. O envio em si acontece uma vez só, o
+que é o que importa.
 
----
-
-## 13. `Geracao:Modo=CnabDireto` pula a homologação do conversor
-
-**Bloqueante pra produção neste modo — não afeta o modo padrão.**
-
-O conversor externo é o motor de layout **já homologado** com cada banco
-e cada cliente — validação de tamanho de campo, regras específicas de
-convênio, particularidades que só aparecem testando contra o ambiente
-real do banco. `EscritorCnab240Pagamento` reimplementa a formatação
-posicional a partir do manual FEBRABAN, sem nenhuma dessas validações
-externas.
-
-**Cenário:** um banco específico exige um valor fixo diferente do default
-num campo que o layout trata como opcional (o próprio manual documenta
-isso pra "Indicativo de Forma de Pagamento", por exemplo). O conversor já
-sabe disso pelo cadastro; o escritor direto não tem de onde saber, e o
-arquivo é rejeitado no banco — depois de já ter sido registrado como
-gerado com sucesso.
-
-**Decisão:** modo opt-in, `Conversor` continua sendo o padrão. Ativar
-`CnabDireto` é decisão de negócio explícita, documentada em
-docs/pagamento-referencia.md §6 — não uma migração silenciosa.
+**Decisão:** aceito. A ordem inversa (enviar e depois registrar) trocaria
+a linha órfã por uma conclusão órfã — pior, porque a conclusão carrega o
+CNAB pronto e não teria onde se ancorar.
 
 ---
 
-## 14. Dados institucionais de `ASA_CASH_ADESAO` são placeholder completo
+## 8. `ClienteTipoDocumento` derivado do tamanho
 
-**Bloqueante pra produção no modo `CnabDireto`.**
+`ClienteTipoDocumento` é `2` (CNPJ) quando o documento tem 14 dígitos e
+`1` (CPF) caso contrário — domínio G005 do FEBRABAN.
 
-Diferente dos outros itens `TODO(a-confirmar)` deste projeto (que erram
-um nome de coluna isolado), aqui **a base inteira nunca foi
-inspecionada** — nome de schema, tabela e todas as colunas de
-`Core.Dominio.EmpresaAdesao`/`AdesaoDbContext` são chute.
+Na prática o valor é sempre `2`: a máscara só reconhece 14 dígitos. A
+regra fica porque a coluna é do ecossistema e uma máscara futura pode
+aceitar CPF; hoje é código sem caminho vivo, não um risco ativo.
 
-**Cenário:** a query falha porque a tabela/coluna não existe (caso mais
-provável e mais seguro — a geração daquele cliente falha isolada, sem
-gravar nada errado). Pior caso: uma tabela/coluna homônima existir por
-coincidência com outro propósito, e o worker escrever um convênio ou uma
-conta errados num header que o banco aceita sem reclamar — o arquivo sai
-"válido" e chega ao cliente com o dado institucional trocado.
+---
 
-**Decisão:** o pior caso (coincidência silenciosa) não tem mitigação
-possível em código — só a confirmação do schema real evita. O caso mais
-provável (tabela/coluna inexistente) já falha alto por natureza do EF.
-Não ativar `Geracao:Modo=CnabDireto` até o schema de `ASA_CASH_ADESAO`
-ser confirmado e `AdesaoDbContext.OnModelCreating` corrigido.
+## 9. Testes não cobrem o caminho de I/O
+
+A suíte cobre a lógica pura: leitura do nome do arquivo, serialização do
+payload, leitura do envelope de resposta, construção do modelo EF.
+
+**O que fica descoberto:** a varredura da pasta (incluindo o
+comportamento sobre SMB), o `File.Move` pra Backup/Quarentena, a chamada
+HTTP real, o `sp_getapplock` e as duas conexões de banco.
+
+**Por quê:** não há SQL Server nem as APIs externas neste ambiente. Um
+teste com mock de `HttpClient` verificaria o mock, não o contrato.
+
+**Mitigação parcial:** `ModeloEfTests` valida o mapeamento sem conexão —
+pega erro de modelo, não erro de schema.
+
+---
+
+## 10. SMB não se comporta como disco local
+
+A pasta de origem é um compartilhamento montado no pod. Coisas que num
+diretório local não acontecem e ali acontecem: `File.GetLastWriteTimeUtc`
+com granularidade e relógio do servidor de arquivos (a janela de
+`SegundosEstabilidade` depende disso), `File.Move` que não é atômico entre
+montagens diferentes, e falhas de I/O transitórias por queda de sessão.
+
+**Mitigação:** Backup e Quarentena são subpastas **da própria pasta de
+origem**, então o move acontece dentro da mesma montagem. Uma falha de I/O
+vira falha daquele arquivo e o resto da varredura segue.
+
+**Não coberto:** relógio do servidor SMB adiantado em relação ao pod faz
+todo arquivo parecer recém-gravado, e a varredura não pega nada. Se isso
+aparecer, é `SegundosEstabilidade` que precisa subir.

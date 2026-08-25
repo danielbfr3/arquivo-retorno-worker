@@ -1,7 +1,7 @@
 namespace CnabRetorno.Common.Http;
 
 /// <summary>Config genérica de client HTTP pra uma API externa — usar uma
-/// seção própria por API (ex: "LayoutConversaoApi", "GestorArquivosApi").</summary>
+/// seção própria por API (hoje só "LayoutConversaoApi").</summary>
 public class ApiClientOptions
 {
     public string BaseUrl { get; set; } = default!;

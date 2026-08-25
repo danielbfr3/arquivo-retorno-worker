@@ -2,15 +2,14 @@
 
 > **Nota:** o fluxo esboçado abaixo (remessa V/PV, D-1, consolidação,
 > conversão final) era o escopo de **retorno de cobrança**, que já não
-> existe neste repositório — os dois robôs atuais são a ingestão de
-> remessas de VAN e a geração de retorno de **pagamentos** (ver
-> `README.md` raiz). Classes citadas abaixo como
+> existe neste repositório — o worker atual entrega planilhas ao conversor
+> (ver `README.md` raiz). Classes citadas abaixo como
 > `ArquivoRetornoWorkerPreview.cs` foram removidas.
 >
 > O guia continua válido como referência **conceitual**: a regra de
-> adaptador único por integração externa segue em vigor, hoje aplicada a
-> APIs HTTP (`ILayoutConversaoApiClient`, `IGestorArquivosApiClient`) em
-> vez de libs por submodule.
+> adaptador único por integração externa segue em vigor, hoje aplicada à
+> API HTTP de conversão (`ILayoutConversaoApiClient`) em vez de libs por
+> submodule.
 
 Guia para quando o worker precisar crescer na direção do fluxo esboçado em
 `ArquivoRetornoWorkerPreview.cs` — remessa + retorno pareados, consulta de
