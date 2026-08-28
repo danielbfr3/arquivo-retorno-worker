@@ -42,9 +42,27 @@ cat <<'TXT'
        - LayoutConversaoApi:BaseUrl
        - Conversao:CampoMetadados  (nome do campo do JSON no multipart)
 
+    4. Decidir o que fazer com as cópias (Gestor de Arquivos + bucket S3).
+       Local, o mais simples é desligar — senão cada arquivo gera dois
+       erros de cópia no log (que não impedem o envio, mas poluem):
+
+           Armazenamento__Habilitado=false
+
+       Pra testar o destino S3 de verdade, suba um LocalStack/MinIO e
+       aponte Armazenamento__S3__ServiceUrl pra ele.
+
+    5. Mesma coisa pro aviso de conclusão no SNS:
+
+           Notificacao__Habilitado=false
+
+       Ou, com LocalStack, crie o tópico e aponte
+       Notificacao__TopicoArn + Notificacao__ServiceUrl pra ele.
+
 ==> Rode o worker com:
 
     Origem__Pasta=$(pwd)/.dados-teste/planilhas/entrada \
+    Armazenamento__Habilitado=false \
+    Notificacao__Habilitado=false \
       dotnet run --project src/CnabRetorno.ExcelCnab.Worker
 
     Dica: pra não esperar o próximo tique do cron, rode uma varredura só

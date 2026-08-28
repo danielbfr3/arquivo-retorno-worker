@@ -77,7 +77,7 @@ reproduzir em dev (só aparece sob concorrência real). Regra usada:
 
 | Ciclo de vida | Quando usar aqui | Exemplo |
 |---|---|---|
-| **Singleton** | Recurso caro de criar (ou imutável), seguro pra compartilhar entre tasks concorrentes | `NomeArquivoSimplificado` (regex compilada uma vez), `TimeProvider.System` |
+| **Singleton** | Recurso caro de criar (ou imutável), seguro pra compartilhar entre tasks concorrentes | `NomeArquivoSimplificado` (regex compilada uma vez), `TimeProvider.System`, `IAmazonS3` e `IAmazonSimpleNotificationService` (clients caros de abrir, devem viver o processo inteiro) |
 | **Scoped** | Recurso barato de criar, **não thread-safe**, deve ter uma instância por "unidade de trabalho" | `CobrancaDbContext`, `AdesaoDbContext`, todos os serviços de aplicação |
 | **Transient** | Sem estado nenhum entre chamadas — raro neste projeto especificamente | — |
 
@@ -289,13 +289,29 @@ logo depois.
 
 ## 5. Mensageria
 
-Não há: o worker não consome nem publica em fila. Ele entrega a planilha
-ao conversor assíncrono e termina no aceite; a mensagem de conclusão é
-tratada por outro worker do ecossistema. Se um consumidor passar a existir
-aqui, ele nasce na `CnabRetorno.Common`, com o nome da fila vindo de
-configuração (nunca literal em código) e o handler resolvido num escopo de
-DI próprio por mensagem — mesmo raciocínio de thread-safety do
-`DbContext` da seção 2.
+Só saída: o worker **publica** um aviso por planilha num tópico SNS
+(`Notificacao/`) e não consome fila nenhuma. O ARN vem de configuração,
+nunca literal em código.
+
+Duas coisas nesse desenho valem além do caso:
+
+- **Null Object em vez de `if` de configuração.** Quando
+  `Notificacao:Habilitado=false`, o DI registra `NotificadorDesligado` —
+  uma implementação que não faz nada — no lugar do publicador real. O
+  processador chama `notificador.NotificarAsync(...)` do mesmo jeito nos
+  dois casos. A alternativa (uma dependência anulável, ou um `if` no meio
+  do fluxo) espalharia a decisão de configuração pelo código de negócio.
+- **Efeito colateral no fim não pode derrubar o que já aconteceu.** O
+  aviso é publicado depois de o arquivo ser enviado e movido pra Backup;
+  uma exceção ali seria sobre trabalho já concluído. Por isso ele é
+  envolvido num `try/catch` que só loga — o mesmo raciocínio do
+  `MarcarInvalidoSemMascararErroAsync`, e o inverso do que se faz com um
+  erro que ainda dá pra corrigir reprocessando.
+
+Se um **consumidor** passar a existir aqui, ele nasce na
+`CnabRetorno.Common`, com o nome da fila vindo de configuração e o handler
+resolvido num escopo de DI próprio por mensagem — mesmo raciocínio de
+thread-safety do `DbContext` da seção 2.
 
 ## 6. Testes (xUnit)
 
@@ -328,11 +344,15 @@ DI próprio por mensagem — mesmo raciocínio de thread-safety do
 
 - **YAGNI nas abstrações**: nenhuma interface criada "pra garantir
   flexibilidade futura" — só onde já existe (ou é modelo explícito de) uma
-  segunda implementação real. `ILayoutConversaoApiClient` existe porque
-  separa o contrato (em `Core`, sem dependência externa) da implementação
-  HTTP concreta; `PastaOrigemExcel` **não** tem interface porque só existe
-  uma origem possível hoje, e um diretório local e um SMB montado são o
-  mesmo `Directory.EnumerateFiles` pro código. Ver
+  segunda implementação real. `IArmazenamentoArquivo` existe porque há
+  **duas** implementações que rodam ao mesmo tempo (Gestor de Arquivos e
+  S3), e é o `IEnumerable<IArmazenamentoArquivo>` do DI que faz o fan-out
+  — adicionar um terceiro destino é uma linha de registro.
+  `ILayoutConversaoApiClient` existe porque separa o contrato (em `Core`,
+  sem dependência externa) da implementação HTTP concreta;
+  `PastaOrigemExcel` **não** tem interface porque só existe uma origem
+  possível hoje, e um diretório local e um SMB montado são o mesmo
+  `Directory.EnumerateFiles` pro código. Ver
   `docs/evoluindo-com-libs-externas.md` pro raciocínio completo.
 - **Regra do adaptador único**: o shape da API de conversão é conhecido
   por **uma única classe** do projeto — os DTOs ficam em `Core`, mas quem
@@ -350,3 +370,10 @@ DI próprio por mensagem — mesmo raciocínio de thread-safety do
   `Cobranca.Arquivo` nasce **antes** do envio ao conversor, porque a
   conclusão assíncrona se ancora nela pelo `ArquivoID`. A ordem inversa
   seria mais simples de escrever e deixaria conclusões órfãs chegando.
+- **Recurso destacável tem custo de desenho, e vale pagá-lo quando é
+  pedido**: o armazenamento de cópias é autocontido em uma pasta
+  (contrato, implementações e registro no DI juntos), contra a convenção
+  de pôr contrato em `Core`. A troca é deliberada — a convenção serve a
+  uma lib compartilhada hipotética, e a removibilidade foi um requisito
+  explícito. A lista de passos de remoção em `regras-de-negocio.md` é o
+  teste desse desenho: se ela crescer, ele saiu do lugar.

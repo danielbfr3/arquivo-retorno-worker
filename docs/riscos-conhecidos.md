@@ -172,7 +172,51 @@ pega erro de modelo, não erro de schema.
 
 ---
 
-## 10. SMB não se comporta como disco local
+## 10. Cópia faltando não interrompe nada (por padrão)
+
+`Armazenamento:FalhaBloqueiaEnvio` é `false`: se o Gestor de Arquivos ou o
+bucket estiverem fora, a planilha segue pro conversor e o arquivo vai pra
+Backup normalmente.
+
+**Cenário:** credencial do bucket expira. Toda cópia falha, o log enche de
+erro, e o processamento continua verde — semanas depois descobre-se que
+não há cópia de nada naquele período.
+
+**Por que é o padrão:** guardar cópia é auxiliar ao fluxo principal, e o
+recurso foi pedido como algo fácil de desativar. Um bucket indisponível
+derrubando a conversão inverteria a relação — o acessório passaria a ser
+requisito.
+
+**Mitigação:** a falha sai como **`LogError`**, não aviso, justamente por
+não interromper nada — é o único sinal que resta. Quem quiser a garantia
+liga `Armazenamento:FalhaBloqueiaEnvio=true`: aí o arquivo vai pra
+quarentena e volta na próxima execução, como qualquer outra falha.
+
+---
+
+## 11. Aviso de conclusão perdido, arquivo processado
+
+O aviso no SNS é publicado **depois** de a planilha ser aceita pelo
+conversor e de o arquivo sair da pasta de entrada. Se a publicação falhar,
+o processamento não é revertido — sai erro no log e o ciclo segue.
+
+**Cenário:** tópico com política errada, ou credencial sem permissão de
+`sns:Publish`. Todo arquivo é processado corretamente e nenhum aviso
+chega. Quem depende do aviso pra disparar o próximo passo fica parado sem
+que nada apareça como falha no worker.
+
+**Por que não pode ser diferente:** deixar o erro subir marcaria como
+falha um arquivo que foi processado com sucesso — e o próximo ciclo não o
+reprocessaria, porque ele já não está na origem. Tentar de novo dentro do
+ciclo seguraria a varredura por causa do passo menos crítico dela.
+
+**Mitigação:** a falha sai como **`LogError`** com `ArquivoID` e nome do
+arquivo — o suficiente pra republicar o aviso à mão. O estado de verdade
+continua sendo a linha em `Cobranca.Arquivo`, não a mensagem.
+
+---
+
+## 12. SMB não se comporta como disco local
 
 A pasta de origem é um compartilhamento montado no pod. Coisas que num
 diretório local não acontecem e ali acontecem: `File.GetLastWriteTimeUtc`

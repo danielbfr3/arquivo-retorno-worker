@@ -13,11 +13,13 @@
 >   escrita: uma linha por planilha enviada.
 > - Contrato do **conversor** (§2.4) — só o endpoint **assíncrono**
 >   (`/v1/convert/async/upload`), com a planilha no campo `file`.
+> - Contrato do **Gestor de Arquivos** (§3.3, presign de upload) — usado
+>   pelo armazenamento de cópias, que grava a mesma planilha no Gestor e
+>   num bucket S3. É recurso destacável: ver "Como desativar / como
+>   remover" em `regras-de-negocio.md`.
 >
-> O que **não** é mais usado: `Cobranca.Parametro` (o worker não resolve
-> mais `ContaHeader` nem NSA), a API **Gestor de Arquivos** (§3 — a
-> planilha vai direto no multipart, sem passar por bucket), e o endpoint
-> síncrono de conversão. As seções de `Titulo.*`, `Instrucao.*` e o
+> O que **não** é usado: `Cobranca.Parametro` (o worker não resolve
+> `ContaHeader` nem NSA) e o endpoint síncrono de conversão. As seções de `Titulo.*`, `Instrucao.*` e o
 > de-para de `TituloConvertido` pertencem ao fluxo de retorno de cobrança,
 > que não existe neste repositório. Tudo isso fica como referência do
 > schema e dos contratos — que continuam reais —, não como descrição do

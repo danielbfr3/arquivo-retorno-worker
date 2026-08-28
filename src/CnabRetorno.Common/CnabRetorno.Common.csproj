@@ -20,8 +20,10 @@
       existir, ele nasce aqui (Common), com todo nome de fila vindo de
       configuração, nunca literal em código.
 
-      Sem SDK de storage: a planilha vai direto no multipart do conversor,
-      sem passar por bucket (ver docs/regras-de-negocio.md).
+      Sem SDK de storage aqui: as cópias no Gestor de Arquivos e no bucket
+      são um recurso destacável, autocontido em
+      CnabRetorno.ExcelCnab.Worker/Armazenamento/ — inclusive o
+      PackageReference do AWSSDK.S3, que sai junto se ele for removido.
     -->
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />

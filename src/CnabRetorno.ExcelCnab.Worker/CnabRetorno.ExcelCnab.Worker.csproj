@@ -24,5 +24,16 @@
     -->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
+    <!--
+      Destino S3 do armazenamento de cópias (Armazenamento/S3Storage.cs).
+      Sai junto com a pasta Armazenamento/ se o recurso for removido — o
+      resto do worker não conhece o SDK.
+    -->
+    <PackageReference Include="AWSSDK.S3" Version="4.0.101.6" />
+    <!--
+      Aviso de conclusão no tópico SNS (Notificacao/). Mesmo caso do
+      AWSSDK.S3: sai junto com a pasta se o recurso for removido.
+    -->
+    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="4.0.100.11" />
   </ItemGroup>
 </Project>

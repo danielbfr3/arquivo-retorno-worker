@@ -1,7 +1,9 @@
 using CnabRetorno.Common.Http;
 using CnabRetorno.Core.Aplicacao;
 using CnabRetorno.ExcelCnab.Worker;
+using CnabRetorno.ExcelCnab.Worker.Armazenamento;
 using CnabRetorno.ExcelCnab.Worker.Http;
+using CnabRetorno.ExcelCnab.Worker.Notificacao;
 using CnabRetorno.ExcelCnab.Worker.Origem;
 using CnabRetorno.ExcelCnab.Worker.Persistencia;
 using CnabRetorno.ExcelCnab.Worker.Pipeline;
@@ -45,6 +47,15 @@ builder.Services.AddHttpClient<ILayoutConversaoApiClient, LayoutConversaoApiClie
     if (!string.IsNullOrWhiteSpace(opt.ApiKey))
         http.DefaultRequestHeaders.Add("X-Api-Key", opt.ApiKey);
 }).AddStandardResilienceHandler();
+
+// Armazenamento das cópias (Gestor de Arquivos + bucket S3, os dois ao
+// mesmo tempo). Recurso destacável: esta linha é tudo que o host sabe
+// dele — ver Armazenamento/ArmazenamentoServiceCollectionExtensions.cs.
+builder.Services.AdicionarArmazenamento(builder.Configuration);
+
+// Aviso de conclusão no tópico SNS. Mesmo desenho destacável do
+// armazenamento — ver Notificacao/NotificacaoServiceCollectionExtensions.cs.
+builder.Services.AdicionarNotificacao(builder.Configuration);
 
 // Pipeline.
 builder.Services.AddScoped<ProcessadorArquivoExcelService>();

@@ -9,8 +9,10 @@ de cada uma e entrega o arquivo ao conversor de layout, que gera o CNAB.
 | 2 | Lê o CNPJ do nome do arquivo — `Simplificado_<cnpj>.xlsx` ou `.xls` |
 | 3 | Busca o cliente na base de **adesão** pra pegar a razão social |
 | 4 | Cria a linha do arquivo em `Cobranca.Arquivo`, com um `ArquivoID` novo |
-| 5 | Envia a planilha ao **conversor assíncrono** — pipeline `excel-cnab`, appId `cash-cobranca` —, com CNPJ e razão social em JSON no corpo da mensagem |
-| 6 | Move o arquivo pra `Backup` (ou pra `Quarentena`, se algo falhou) |
+| 5 | Guarda uma cópia da planilha no **Gestor de Arquivos e no bucket S3** (os dois ao mesmo tempo) |
+| 6 | Envia a planilha ao **conversor assíncrono** — pipeline `excel-cnab`, appId `cash-cobranca` —, com CNPJ e razão social em JSON no corpo da mensagem |
+| 7 | Move o arquivo pra `Backup` (ou pra `Quarentena`, se algo falhou) |
+| 8 | Publica no **tópico SNS** um aviso de que terminou o processamento daquela planilha |
 
 A planilha **não é aberta** em momento nenhum: o CNPJ vem do nome e o
 conteúdo é repassado como bytes opacos pro pipeline, que é quem entende o
@@ -33,10 +35,19 @@ src/
     Origem/                         pasta de entrada, backup, quarentena, leitura do nome
     Persistencia/                   CASH_COBRANCA + base de adesão + lock entre réplicas
     Http/                           client do conversor de layout
+    Armazenamento/                  cópias no Gestor de Arquivos + S3 (recurso destacável)
+    Notificacao/                    aviso de conclusão no SNS (recurso destacável)
     Pipeline/                       varredura e processamento de um arquivo
 tests/CnabRetorno.Tests/
 docs/
 ```
+
+As pastas `Armazenamento/` e `Notificacao/` são autocontidas de propósito
+— contrato, implementações e registro no DI moram nelas, e nada em
+`Core`/`Common` sabe que storage ou mensageria existem. Desligar cada uma
+é uma chave de configuração; remover é apagar a pasta e mais quatro
+linhas, listadas em
+[`docs/regras-de-negocio.md`](docs/regras-de-negocio.md#como-desativar--como-remover).
 
 `Core` e `Common` continuam separados do worker de propósito: `Core`
 modela o futuro `arquivo-core-lib` (domínio e contratos, zero dependência
@@ -78,6 +89,13 @@ lugar de `:` (ex.: `Origem__Pasta`).
 | `Conversao:Pipeline` | Pipeline do conversor — `excel-cnab` |
 | `Conversao:AppId` | AppID da chamada — `cash-cobranca` |
 | `Conversao:CampoMetadados` | Campo do multipart que leva o JSON do cliente (**em aberto**) |
+| `Armazenamento:Habilitado` | Chave-mestra das cópias — `false` desliga os dois destinos |
+| `Armazenamento:FalhaBloqueiaEnvio` | Cópia que falha impede o envio ao conversor? Padrão `false` |
+| `Armazenamento:GestorArquivos:*` | `Habilitado`, `AppId`, `BaseUrl`, `ApiKey` — presign + PUT |
+| `Armazenamento:S3:*` | `Habilitado`, `Bucket`, `Prefixo`, `Region`, `ServiceUrl` — `PutObject` direto |
+| `Notificacao:Habilitado` | Liga/desliga o aviso de conclusão no SNS |
+| `Notificacao:TopicoArn` | ARN do tópico (**em aberto**) |
+| `Notificacao:Region` / `ServiceUrl` / `Assunto` | Região, endpoint alternativo (LocalStack) e assunto da mensagem |
 | `LayoutConversaoApi:BaseUrl` | Base URL do conversor (**em aberto**) |
 | `RegistroArquivo:AppId` / `CriadoPor` | O que é gravado na linha de `Cobranca.Arquivo` |
 | `Worker:Modo` / `Cron` | `Loop` (residente, com cron interno) ou `CronJob` (roda e encerra) |
@@ -102,6 +120,13 @@ mais críticos:
   reais, os números são suposição, e a tabela é compartilhada com o
   ecossistema CASH inteiro.
 - **Base URL e autenticação** do conversor.
+- **Bucket S3 e base URL do Gestor de Arquivos** — sem eles as cópias
+  falham. Por padrão isso **não** impede a conversão: sai erro no log e o
+  arquivo segue. Ligue `Armazenamento:FalhaBloqueiaEnvio` se a cópia for
+  requisito, ou `Armazenamento:Habilitado=false` até os valores existirem.
+- **ARN do tópico SNS** — sem ele o aviso falha. Nunca derruba o
+  processamento (o arquivo já foi enviado quando o aviso acontece); use
+  `Notificacao:Habilitado=false` até o tópico existir.
 
 ## Documentação
 

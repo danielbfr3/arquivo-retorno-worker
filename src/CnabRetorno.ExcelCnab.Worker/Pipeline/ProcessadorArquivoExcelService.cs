@@ -1,7 +1,11 @@
 using CnabRetorno.Core.Aplicacao;
 using CnabRetorno.Core.Aplicacao.Dtos;
+using CnabRetorno.ExcelCnab.Worker.Armazenamento;
+using CnabRetorno.ExcelCnab.Worker.Notificacao;
 using CnabRetorno.ExcelCnab.Worker.Origem;
 using CnabRetorno.ExcelCnab.Worker.Persistencia;
+using CnabRetorno.ExcelCnab.Worker.Http;
+using Microsoft.Extensions.Options;
 
 namespace CnabRetorno.ExcelCnab.Worker.Pipeline;
 
@@ -22,10 +26,13 @@ public sealed record PlanilhaProcessada(ResultadoEnvio Resultado, Guid? ArquivoI
 ///   <item>lê o CNPJ do nome do arquivo (<c>Simplificado_{cnpj}.xlsx</c>);</item>
 ///   <item>busca o cliente na base de adesão pra saber a razão social;</item>
 ///   <item>cria a linha em <c>Cobranca.Arquivo</c> com um ArquivoID novo;</item>
+///   <item>guarda uma cópia da planilha em cada destino habilitado
+///   (Gestor de Arquivos e bucket S3);</item>
 ///   <item>envia a planilha ao conversor assíncrono (pipeline
 ///   <c>excel-cnab</c>), com CNPJ e razão social em JSON no corpo da
 ///   mensagem;</item>
-///   <item>move o arquivo pra Backup.</item>
+///   <item>move o arquivo pra Backup;</item>
+///   <item>publica o aviso de conclusão no tópico SNS.</item>
 /// </list>
 ///
 /// A ordem "registra, depois envia" não é estética: o conversor é
@@ -41,7 +48,11 @@ public class ProcessadorArquivoExcelService(
     NomeArquivoSimplificado nomes,
     EmpresaAdesaoRepository adesao,
     ArquivoRepository arquivos,
+    ArmazenadorDeCopias copias,
     ILayoutConversaoApiClient conversor,
+    INotificadorConclusao notificador,
+    IOptions<ConversaoOptions> opcoesConversao,
+    TimeProvider tempo,
     ILogger<ProcessadorArquivoExcelService> logger)
 {
     public async Task<PlanilhaProcessada> ProcessarAsync(ArquivoPendente pendente, CancellationToken ct)
@@ -80,24 +91,36 @@ public class ProcessadorArquivoExcelService(
         var arquivoId = Guid.NewGuid();
         await arquivos.RegistrarAsync(arquivoId, pendente.Nome, reconhecido.Cnpj, ct);
 
-        // 4. Envio ao conversor assíncrono.
         var metadados = new MetadadosCliente(reconhecido.Cnpj, empresa.RazaoSocial.Trim()).Serializar();
 
         ConvertAsyncUploadResponse aceite;
         try
         {
+            // 4. Cópias, antes do envio: é a partir do envio que o arquivo
+            //    sai da pasta de entrada, e a cópia é o que sobra dele.
+            //    Uma cópia que falha só chega a interromper o processamento
+            //    se Armazenamento:FalhaBloqueiaEnvio estiver ligado; no
+            //    padrão, sai erro no log e o fluxo segue.
+            await copias.ArmazenarAsync(arquivoId, pendente.Nome, conteudo, ct);
+
+            // 5. Envio ao conversor assíncrono.
             aceite = await conversor.EnviarParaConversaoAsync(
                 conteudo, pendente.Nome, arquivoId, metadados, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // A linha já existe e a conversão não vai concluir. Marcar
+            // A linha já existe e a conversão não vai acontecer. Marcar
             // como inválida impede que ela fique pendurada esperando uma
             // conclusão que nunca chega; o arquivo vai pra quarentena
             // porque deixá-lo na origem faria o próximo ciclo criar uma
             // segunda linha, com ArquivoID novo, pro mesmo arquivo.
+            //
+            // Os dois passos falham do mesmo jeito de propósito: seja um
+            // bucket obrigatório fora do ar ou o conversor recusando, o
+            // estado a limpar é o mesmo — linha criada, arquivo ainda na
+            // pasta.
             logger.LogError(ex,
-                "Falha ao enviar {Nome} (ArquivoID {ArquivoId}, cliente {Cnpj}) ao conversor — arquivo movido pra quarentena",
+                "Falha ao processar {Nome} (ArquivoID {ArquivoId}, cliente {Cnpj}) — arquivo movido pra quarentena",
                 pendente.Nome, arquivoId, reconhecido.Cnpj);
 
             await MarcarInvalidoSemMascararErroAsync(arquivoId, ct);
@@ -105,14 +128,53 @@ public class ProcessadorArquivoExcelService(
             return new PlanilhaProcessada(ResultadoEnvio.Falhou, arquivoId, reconhecido.Cnpj);
         }
 
-        // 5. Só depois do aceite o arquivo sai da pasta de entrada.
+        // 6. Só depois do aceite o arquivo sai da pasta de entrada.
         origem.MoverParaBackup(pendente.Caminho);
 
         logger.LogInformation(
             "Planilha {Nome} do cliente {Cnpj} ({RazaoSocial}) enviada pra conversão — ArquivoID {ArquivoId}, job {JobId}",
             pendente.Nome, reconhecido.Cnpj, empresa.RazaoSocial, arquivoId, aceite.JobId ?? "<sem jobId>");
 
+        // 7. Aviso de conclusão, por último e sem poder derrubar nada: a
+        //    planilha já foi aceita e o arquivo já saiu da pasta. Deixar o
+        //    erro subir aqui marcaria como falha um arquivo que foi
+        //    processado com sucesso — e o próximo ciclo não o
+        //    reprocessaria, porque ele não está mais na origem.
+        await NotificarSemDerrubarOEnvioAsync(
+            new PlanilhaEnviadaEvento
+            {
+                ArquivoId = arquivoId,
+                ArquivoNome = pendente.Nome,
+                Cnpj = reconhecido.Cnpj,
+                RazaoSocial = empresa.RazaoSocial.Trim(),
+                AppId = opcoesConversao.Value.AppId,
+                Pipeline = opcoesConversao.Value.Pipeline,
+                JobId = aceite.JobId,
+                OcorridoEm = tempo.GetUtcNow(),
+            },
+            ct);
+
         return new PlanilhaProcessada(ResultadoEnvio.Enviado, arquivoId, reconhecido.Cnpj);
+    }
+
+    /// <summary>
+    /// O aviso é a última coisa que acontece e a menos crítica: o trabalho
+    /// já está feito e registrado. Um tópico fora do ar não pode
+    /// transformar um arquivo processado em falha — sai erro no log, que é
+    /// o que permite reenviar o aviso à mão se alguém depender dele.
+    /// </summary>
+    private async Task NotificarSemDerrubarOEnvioAsync(PlanilhaEnviadaEvento evento, CancellationToken ct)
+    {
+        try
+        {
+            await notificador.NotificarAsync(evento, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex,
+                "Planilha {Nome} (ArquivoID {ArquivoId}) foi processada, mas o aviso de conclusão não foi publicado",
+                evento.ArquivoNome, evento.ArquivoId);
+        }
     }
 
     private async Task MarcarInvalidoSemMascararErroAsync(Guid arquivoId, CancellationToken ct)
