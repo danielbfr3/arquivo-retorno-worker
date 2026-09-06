@@ -8,22 +8,27 @@
 
 > **Escopo — o que o worker atual realmente consome daqui:**
 >
-> - `Cobranca.Arquivo` — a única tabela mapeada
->   (`ExcelCnab.Worker/Persistencia/CobrancaDbContext.cs`), e a única
+> - `Cobranca.Arquivo` — mapeada em
+>   `ExcelCnab.Worker/Persistencia/CobrancaDbContext.cs`, e a única
 >   escrita: uma linha por planilha enviada.
+> - `Cobranca.DocumentoDados` — tabela **nova**, não descrita neste
+>   documento (que é um extrato do schema pré-existente do time de
+>   cash-cobranca). Só leitura: `NumeroDocumento` + `Dados` (JSON), usada
+>   pra preencher a planilha antes do envio. Ver
+>   `deploy/criar-tabela-documento-dados.sql` e
+>   `Core/Dominio/DocumentoDados.cs` — schema ainda `TODO(a-confirmar)`
+>   com o time dono da base.
 > - Contrato do **conversor** (§2.4) — só o endpoint **assíncrono**
->   (`/v1/convert/async/upload`), com a planilha no campo `file`.
-> - Contrato do **Gestor de Arquivos** (§3.3, presign de upload) — usado
->   pelo armazenamento de cópias, que grava a mesma planilha no Gestor e
->   num bucket S3. É recurso destacável: ver "Como desativar / como
->   remover" em `regras-de-negocio.md`.
+>   (`/v1/convert/async/upload`), com a planilha (já preenchida) no campo
+>   `file`.
 >
 > O que **não** é usado: `Cobranca.Parametro` (o worker não resolve
-> `ContaHeader` nem NSA) e o endpoint síncrono de conversão. As seções de `Titulo.*`, `Instrucao.*` e o
-> de-para de `TituloConvertido` pertencem ao fluxo de retorno de cobrança,
-> que não existe neste repositório. Tudo isso fica como referência do
-> schema e dos contratos — que continuam reais —, não como descrição do
-> que o código faz.
+> `ContaHeader` nem NSA), o endpoint síncrono de conversão, e nenhum
+> storage externo (Gestor de Arquivos/S3) — removido do worker. As seções
+> de `Titulo.*`, `Instrucao.*` e o de-para de `TituloConvertido` pertencem
+> ao fluxo de retorno de cobrança, que não existe neste repositório. Tudo
+> isso fica como referência do schema e dos contratos — que continuam
+> reais —, não como descrição do que o código faz.
 
 ---
 

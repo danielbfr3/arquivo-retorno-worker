@@ -1,11 +1,9 @@
 using CnabRetorno.Core.Aplicacao;
 using CnabRetorno.Core.Aplicacao.Dtos;
-using CnabRetorno.ExcelCnab.Worker.Armazenamento;
-using CnabRetorno.ExcelCnab.Worker.Notificacao;
+using CnabRetorno.Core.Dominio;
 using CnabRetorno.ExcelCnab.Worker.Origem;
 using CnabRetorno.ExcelCnab.Worker.Persistencia;
-using CnabRetorno.ExcelCnab.Worker.Http;
-using Microsoft.Extensions.Options;
+using CnabRetorno.ExcelCnab.Worker.Planilha;
 
 namespace CnabRetorno.ExcelCnab.Worker.Pipeline;
 
@@ -14,6 +12,8 @@ public enum ResultadoEnvio
     Enviado,
     NaoReconhecido,
     ClienteNaoEncontrado,
+    DocumentoSemDados,
+    ColunaNaoEncontrada,
     Falhou,
 }
 
@@ -25,44 +25,44 @@ public sealed record PlanilhaProcessada(ResultadoEnvio Resultado, Guid? ArquivoI
 /// <list type="number">
 ///   <item>lê o CNPJ do nome do arquivo (<c>Simplificado_{cnpj}.xlsx</c>);</item>
 ///   <item>busca o cliente na base de adesão pra saber a razão social;</item>
-///   <item>cria a linha em <c>Cobranca.Arquivo</c> com um ArquivoID novo;</item>
-///   <item>guarda uma cópia da planilha em cada destino habilitado
-///   (Gestor de Arquivos e bucket S3);</item>
-///   <item>envia a planilha ao conversor assíncrono (pipeline
+///   <item>busca os dados de preenchimento em <c>Cobranca.DocumentoDados</c>,
+///   pelo mesmo CNPJ;</item>
+///   <item>abre a planilha em memória e escreve cada valor do JSON de dados
+///   na coluna cujo cabeçalho bate, em todas as linhas de dados;</item>
+///   <item>cria a linha em <c>Cobranca.Arquivo</c> com um ArquivoID novo —
+///   só depois que os bytes finais já estão prontos;</item>
+///   <item>envia a planilha já preenchida ao conversor assíncrono (pipeline
 ///   <c>excel-cnab</c>), com CNPJ e razão social em JSON no corpo da
 ///   mensagem;</item>
-///   <item>move o arquivo pra Backup;</item>
-///   <item>publica o aviso de conclusão no tópico SNS.</item>
+///   <item>grava a versão preenchida em Backup e apaga o arquivo original
+///   da pasta de entrada.</item>
 /// </list>
 ///
-/// A ordem "registra, depois envia" não é estética: o conversor é
+/// A ordem "preenche, registra, depois envia" não é estética: o conversor é
 /// assíncrono e a conclusão chega depois, correlacionada pelo ArquivoID —
 /// se a linha não existir, a conclusão chega sem ter onde se ancorar
-/// (docs/cash-cobranca-referencia.md §2.4).
-///
-/// Não há leitura da planilha em lugar nenhum: o conteúdo é repassado como
-/// bytes opacos. Quem entende o formato é o pipeline do conversor.
+/// (docs/cash-cobranca-referencia.md §2.4). E registrar antes de saber que
+/// a planilha pôde ser preenchida criaria uma linha órfã pra um arquivo que
+/// nunca chega a ser enviado.
 /// </summary>
 public class ProcessadorArquivoExcelService(
     PastaOrigemExcel origem,
     NomeArquivoSimplificado nomes,
     EmpresaAdesaoRepository adesao,
+    DocumentoDadosRepository documentoDados,
+    PreenchedorPlanilhaExcel preenchedor,
     ArquivoRepository arquivos,
-    ArmazenadorDeCopias copias,
     ILayoutConversaoApiClient conversor,
-    INotificadorConclusao notificador,
-    IOptions<ConversaoOptions> opcoesConversao,
-    TimeProvider tempo,
     ILogger<ProcessadorArquivoExcelService> logger)
 {
     public async Task<PlanilhaProcessada> ProcessarAsync(ArquivoPendente pendente, CancellationToken ct)
     {
-        // 1. CNPJ do nome do arquivo — a única identificação do cliente
-        //    que existe, já que a planilha não é aberta.
+        // 1. CNPJ do nome do arquivo — a única identificação do documento
+        //    que existe antes de abrir a planilha.
         if (!nomes.TentarReconhecer(pendente.Nome, out var reconhecido))
         {
             logger.LogWarning(
-                "Arquivo {Nome} fora do padrão esperado (Simplificado_<cnpj>.xlsx|.xls) — movendo pra quarentena",
+                "Arquivo {Nome} fora do padrão esperado (Simplificado_<cnpj>.xlsx) — movendo pra quarentena",
                 pendente.Nome);
             origem.MoverParaQuarentena(pendente.Caminho);
             return new PlanilhaProcessada(ResultadoEnvio.NaoReconhecido);
@@ -84,10 +84,43 @@ public class ProcessadorArquivoExcelService(
             return new PlanilhaProcessada(ResultadoEnvio.ClienteNaoEncontrado, Cnpj: reconhecido.Cnpj);
         }
 
-        var conteudo = await origem.LerAsync(pendente.Caminho, ct);
+        // 3. Dados de preenchimento em Cobranca.DocumentoDados — só leitura,
+        //    quem popula é outro sistema. Sem linha, ou JSON inválido/vazio,
+        //    não há o que escrever na planilha.
+        var valores = await ObterValoresParaPreencherAsync(reconhecido.Cnpj, ct);
+        if (valores is null)
+        {
+            logger.LogError(
+                "Documento {Cnpj} sem dados válidos em Cobranca.DocumentoDados — arquivo {Nome} movido pra quarentena, sem envio",
+                reconhecido.Cnpj, pendente.Nome);
+            origem.MoverParaQuarentena(pendente.Caminho);
+            return new PlanilhaProcessada(ResultadoEnvio.DocumentoSemDados, Cnpj: reconhecido.Cnpj);
+        }
 
-        // 3. O ArquivoID nasce aqui e vale pro registro e pra conversão —
+        var conteudoOriginal = await origem.LerAsync(pendente.Caminho, ct);
+
+        // 4. Preenchimento em memória. Uma chave sem coluna correspondente
+        //    (ou planilha sem linha de dados) rejeita o arquivo inteiro:
+        //    nada é registrado nem enviado, e o original vai pra
+        //    quarentena intacto — é a evidência do problema.
+        byte[] conteudoPreenchido;
+        try
+        {
+            conteudoPreenchido = preenchedor.Preencher(conteudoOriginal, valores);
+        }
+        catch (Exception ex) when (ex is ColunaNaoEncontradaException or PlanilhaSemLinhasDeDadosException)
+        {
+            logger.LogError(ex,
+                "Falha ao preencher {Nome} (cliente {Cnpj}) — arquivo movido pra quarentena, sem envio",
+                pendente.Nome, reconhecido.Cnpj);
+            origem.MoverParaQuarentena(pendente.Caminho);
+            return new PlanilhaProcessada(ResultadoEnvio.ColunaNaoEncontrada, Cnpj: reconhecido.Cnpj);
+        }
+
+        // 5. O ArquivoID nasce aqui e vale pro registro e pra conversão —
         //    um id só na cadeia inteira, nunca um GUID novo por chamada.
+        //    Só chega até aqui uma planilha que já foi preenchida com
+        //    sucesso.
         var arquivoId = Guid.NewGuid();
         await arquivos.RegistrarAsync(arquivoId, pendente.Nome, reconhecido.Cnpj, ct);
 
@@ -96,31 +129,21 @@ public class ProcessadorArquivoExcelService(
         ConvertAsyncUploadResponse aceite;
         try
         {
-            // 4. Cópias, antes do envio: é a partir do envio que o arquivo
-            //    sai da pasta de entrada, e a cópia é o que sobra dele.
-            //    Uma cópia que falha só chega a interromper o processamento
-            //    se Armazenamento:FalhaBloqueiaEnvio estiver ligado; no
-            //    padrão, sai erro no log e o fluxo segue.
-            await copias.ArmazenarAsync(arquivoId, pendente.Nome, conteudo, ct);
-
-            // 5. Envio ao conversor assíncrono.
+            // 6. Envio ao conversor assíncrono — bytes já preenchidos, não
+            //    mais os originais.
             aceite = await conversor.EnviarParaConversaoAsync(
-                conteudo, pendente.Nome, arquivoId, metadados, ct);
+                conteudoPreenchido, pendente.Nome, arquivoId, metadados, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // A linha já existe e a conversão não vai acontecer. Marcar
             // como inválida impede que ela fique pendurada esperando uma
-            // conclusão que nunca chega; o arquivo vai pra quarentena
-            // porque deixá-lo na origem faria o próximo ciclo criar uma
-            // segunda linha, com ArquivoID novo, pro mesmo arquivo.
-            //
-            // Os dois passos falham do mesmo jeito de propósito: seja um
-            // bucket obrigatório fora do ar ou o conversor recusando, o
-            // estado a limpar é o mesmo — linha criada, arquivo ainda na
-            // pasta.
+            // conclusão que nunca chega; o arquivo original vai pra
+            // quarentena porque deixá-lo na origem faria o próximo ciclo
+            // criar uma segunda linha, com ArquivoID novo, pro mesmo
+            // arquivo.
             logger.LogError(ex,
-                "Falha ao processar {Nome} (ArquivoID {ArquivoId}, cliente {Cnpj}) — arquivo movido pra quarentena",
+                "Falha ao enviar {Nome} (ArquivoID {ArquivoId}, cliente {Cnpj}) — arquivo movido pra quarentena",
                 pendente.Nome, arquivoId, reconhecido.Cnpj);
 
             await MarcarInvalidoSemMascararErroAsync(arquivoId, ct);
@@ -128,53 +151,33 @@ public class ProcessadorArquivoExcelService(
             return new PlanilhaProcessada(ResultadoEnvio.Falhou, arquivoId, reconhecido.Cnpj);
         }
 
-        // 6. Só depois do aceite o arquivo sai da pasta de entrada.
-        origem.MoverParaBackup(pendente.Caminho);
+        // 7. Só depois do aceite o arquivo sai da pasta de entrada — e o
+        //    que fica em Backup é a versão preenchida, que foi de fato
+        //    mandada ao conversor.
+        await origem.GravarNoBackupAsync(pendente.Caminho, conteudoPreenchido, ct);
 
         logger.LogInformation(
-            "Planilha {Nome} do cliente {Cnpj} ({RazaoSocial}) enviada pra conversão — ArquivoID {ArquivoId}, job {JobId}",
+            "Planilha {Nome} do cliente {Cnpj} ({RazaoSocial}) preenchida e enviada pra conversão — ArquivoID {ArquivoId}, job {JobId}",
             pendente.Nome, reconhecido.Cnpj, empresa.RazaoSocial, arquivoId, aceite.JobId ?? "<sem jobId>");
-
-        // 7. Aviso de conclusão, por último e sem poder derrubar nada: a
-        //    planilha já foi aceita e o arquivo já saiu da pasta. Deixar o
-        //    erro subir aqui marcaria como falha um arquivo que foi
-        //    processado com sucesso — e o próximo ciclo não o
-        //    reprocessaria, porque ele não está mais na origem.
-        await NotificarSemDerrubarOEnvioAsync(
-            new PlanilhaEnviadaEvento
-            {
-                ArquivoId = arquivoId,
-                ArquivoNome = pendente.Nome,
-                Cnpj = reconhecido.Cnpj,
-                RazaoSocial = empresa.RazaoSocial.Trim(),
-                AppId = opcoesConversao.Value.AppId,
-                Pipeline = opcoesConversao.Value.Pipeline,
-                JobId = aceite.JobId,
-                OcorridoEm = tempo.GetUtcNow(),
-            },
-            ct);
 
         return new PlanilhaProcessada(ResultadoEnvio.Enviado, arquivoId, reconhecido.Cnpj);
     }
 
-    /// <summary>
-    /// O aviso é a última coisa que acontece e a menos crítica: o trabalho
-    /// já está feito e registrado. Um tópico fora do ar não pode
-    /// transformar um arquivo processado em falha — sai erro no log, que é
-    /// o que permite reenviar o aviso à mão se alguém depender dele.
-    /// </summary>
-    private async Task NotificarSemDerrubarOEnvioAsync(PlanilhaEnviadaEvento evento, CancellationToken ct)
+    /// <summary>Devolve <c>null</c> quando não há linha pra este documento
+    /// ou o JSON de <c>Dados</c> não desserializa em nada aproveitável (ver
+    /// <see cref="DocumentoDados.DesserializarDados"/>) — os dois casos
+    /// tratados como "documento sem dados" pra quem chama.</summary>
+    private async Task<IReadOnlyDictionary<string, string>?> ObterValoresParaPreencherAsync(
+        string cnpj, CancellationToken ct)
     {
-        try
-        {
-            await notificador.NotificarAsync(evento, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogError(ex,
-                "Planilha {Nome} (ArquivoID {ArquivoId}) foi processada, mas o aviso de conclusão não foi publicado",
-                evento.ArquivoNome, evento.ArquivoId);
-        }
+        var linha = await documentoDados.ObterPorDocumentoAsync(cnpj, ct);
+        if (linha is null) return null;
+
+        var valores = linha.DesserializarDados();
+        if (valores is null)
+            logger.LogError("JSON inválido ou vazio em Cobranca.DocumentoDados.Dados pro documento {Cnpj}", cnpj);
+
+        return valores;
     }
 
     private async Task MarcarInvalidoSemMascararErroAsync(Guid arquivoId, CancellationToken ct)

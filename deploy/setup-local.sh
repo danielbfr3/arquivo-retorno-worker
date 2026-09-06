@@ -12,17 +12,17 @@ cd "$(dirname "$0")/.."
 echo "==> Subindo SQL Server (CASH_COBRANCA e base de adesão)..."
 docker compose -f docker-compose.local.yml up -d
 
-echo "==> Gerando planilha de exemplo na pasta de entrada..."
+echo "==> Copiando planilha de exemplo pra pasta de entrada..."
 # O nome segue a máscara "Simplificado_{cnpj}" do appsettings, com CNPJ
 # fictício. Fora do padrão, o arquivo iria pra Quarentena.
 #
-# O conteúdo não importa pro worker (ele não abre a planilha) — mas
-# tampouco é um .xlsx válido, então o pipeline do conversor rejeitaria.
-# Pra testar o caminho completo, troque por uma planilha de verdade com
-# este nome.
+# Ao contrário do fluxo antigo, o worker agora ABRE a planilha (pra
+# preenchê-la) — por isso o exemplo é um .xlsx de verdade, versionado em
+# deploy/exemplos/, com os cabeçalhos "Documento", "Nome Cliente" e "Valor"
+# na linha 1 e duas linhas de dados.
 mkdir -p .dados-teste/planilhas/entrada
-printf 'placeholder — troque por um .xlsx real pra testar o conversor\n' \
-  > .dados-teste/planilhas/entrada/Simplificado_12345678000199.xlsx
+cp deploy/exemplos/Simplificado_12345678000199.xlsx \
+  .dados-teste/planilhas/entrada/Simplificado_12345678000199.xlsx
 
 cat <<'TXT'
 
@@ -30,6 +30,7 @@ cat <<'TXT'
 
     1. Criar o schema nos containers locais:
        - Cobranca.Arquivo         (ver docs/cash-cobranca-referencia.md §1.1)
+       - Cobranca.DocumentoDados  (ver deploy/criar-tabela-documento-dados.sql)
        - a tabela da base de adesão com Documento e RazaoSocial
          (schema real ainda em aberto — ver Persistencia/AdesaoDbContext.cs)
 
@@ -37,35 +38,37 @@ cat <<'TXT'
        o arquivo de exemplo vai direto pra Quarentena por "cliente não
        encontrado".
 
-    3. Apontar o conversor em appsettings.json — hoje está como
+    3. Inserir uma linha em Cobranca.DocumentoDados pro mesmo CNPJ, com um
+       Dados cujas chaves batem com os cabeçalhos da planilha de exemplo
+       ("Nome Cliente" e "Valor"):
+
+           INSERT INTO Cobranca.DocumentoDados (NumeroDocumento, Dados)
+           VALUES (
+             '12345678000199',
+             N'{"Nome Cliente": "ACME DISTRIBUIDORA LTDA", "Valor": "1500.00"}'
+           );
+
+       Sem essa linha, o arquivo vai pra quarentena por "documento sem
+       dados".
+
+    4. Apontar o conversor em appsettings.json — hoje está como
        TODO(a-confirmar):
        - LayoutConversaoApi:BaseUrl
        - Conversao:CampoMetadados  (nome do campo do JSON no multipart)
 
-    4. Decidir o que fazer com as cópias (Gestor de Arquivos + bucket S3).
-       Local, o mais simples é desligar — senão cada arquivo gera dois
-       erros de cópia no log (que não impedem o envio, mas poluem):
-
-           Armazenamento__Habilitado=false
-
-       Pra testar o destino S3 de verdade, suba um LocalStack/MinIO e
-       aponte Armazenamento__S3__ServiceUrl pra ele.
-
-    5. Mesma coisa pro aviso de conclusão no SNS:
-
-           Notificacao__Habilitado=false
-
-       Ou, com LocalStack, crie o tópico e aponte
-       Notificacao__TopicoArn + Notificacao__ServiceUrl pra ele.
-
 ==> Rode o worker com:
 
     Origem__Pasta=$(pwd)/.dados-teste/planilhas/entrada \
-    Armazenamento__Habilitado=false \
-    Notificacao__Habilitado=false \
       dotnet run --project src/CnabRetorno.ExcelCnab.Worker
 
     Dica: pra não esperar o próximo tique do cron, rode uma varredura só
     com Worker__Modo=CronJob
+
+==> Depois de rodar, confira:
+
+    - o arquivo sumiu de .dados-teste/planilhas/entrada;
+    - apareceu em .dados-teste/planilhas/entrada/Backup/, e as colunas
+      "Nome Cliente" e "Valor" já vêm preenchidas nas duas linhas de dados;
+    - SELECT * FROM Cobranca.Arquivo mostra uma linha nova.
 
 TXT

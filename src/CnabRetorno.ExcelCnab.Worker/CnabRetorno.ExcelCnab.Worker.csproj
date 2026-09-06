@@ -16,24 +16,17 @@
     <PackageReference Include="Cronos" Version="0.10.0" />
     <!--
       Grava a linha do arquivo em Cobranca.Arquivo (base CASH_COBRANCA) e
-      lê a razão social do cliente na base de adesão.
-
-      Sem biblioteca de leitura de Excel de propósito: o robô não abre a
-      planilha. O CNPJ vem do nome do arquivo e o conteúdo é repassado como
-      bytes opacos pro pipeline "excel-cnab", que é quem entende o formato.
+      lê a razão social do cliente na base de adesão, além da nova tabela
+      Cobranca.DocumentoDados (numero de documento + JSON de dados).
     -->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
     <!--
-      Destino S3 do armazenamento de cópias (Armazenamento/S3Storage.cs).
-      Sai junto com a pasta Armazenamento/ se o recurso for removido — o
-      resto do worker não conhece o SDK.
+      Abre e preenche a planilha em memória (Planilha/PreenchedorPlanilhaExcel.cs)
+      antes de repassá-la ao conversor. Único lugar do worker que conhece
+      esta biblioteca — MIT, sem restrição de uso comercial (ao contrário
+      do EPPlus >v5). Só lê/grava .xlsx (OOXML); não abre .xls.
     -->
-    <PackageReference Include="AWSSDK.S3" Version="4.0.101.6" />
-    <!--
-      Aviso de conclusão no tópico SNS (Notificacao/). Mesmo caso do
-      AWSSDK.S3: sai junto com a pasta se o recurso for removido.
-    -->
-    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="4.0.100.11" />
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
   </ItemGroup>
 </Project>

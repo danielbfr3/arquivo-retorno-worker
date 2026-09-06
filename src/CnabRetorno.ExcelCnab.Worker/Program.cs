@@ -1,12 +1,11 @@
 using CnabRetorno.Common.Http;
 using CnabRetorno.Core.Aplicacao;
 using CnabRetorno.ExcelCnab.Worker;
-using CnabRetorno.ExcelCnab.Worker.Armazenamento;
 using CnabRetorno.ExcelCnab.Worker.Http;
-using CnabRetorno.ExcelCnab.Worker.Notificacao;
 using CnabRetorno.ExcelCnab.Worker.Origem;
 using CnabRetorno.ExcelCnab.Worker.Persistencia;
 using CnabRetorno.ExcelCnab.Worker.Pipeline;
+using CnabRetorno.ExcelCnab.Worker.Planilha;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -16,6 +15,7 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Services.Configure<CronOptions>(builder.Configuration.GetSection(CronOptions.Secao));
 builder.Services.Configure<OrigemOptions>(builder.Configuration.GetSection(OrigemOptions.Secao));
 builder.Services.Configure<NomenclaturaOptions>(builder.Configuration.GetSection(NomenclaturaOptions.Secao));
+builder.Services.Configure<PreenchimentoOptions>(builder.Configuration.GetSection(PreenchimentoOptions.Secao));
 builder.Services.Configure<PipelineOptions>(builder.Configuration.GetSection(PipelineOptions.Secao));
 builder.Services.Configure<RegistroArquivoOptions>(builder.Configuration.GetSection(RegistroArquivoOptions.Secao));
 builder.Services.Configure<ConversaoOptions>(builder.Configuration.GetSection(ConversaoOptions.Secao));
@@ -25,20 +25,25 @@ builder.Services.Configure<ApiClientOptions>(
 builder.Services.AddSingleton(TimeProvider.System);
 
 // Persistência — duas bases de outros times, nenhuma migration daqui.
-// CASH_COBRANCA: escreve a linha do arquivo. Adesão: lê a razão social.
+// CASH_COBRANCA: escreve a linha do arquivo e lê Cobranca.DocumentoDados
+// (dados de preenchimento). Adesão: lê a razão social.
 builder.Services.AddDbContext<CobrancaDbContext>(opt =>
     opt.UseSqlServer(builder.Configuration.GetConnectionString("Cobranca")));
 builder.Services.AddDbContext<AdesaoDbContext>(opt =>
     opt.UseSqlServer(builder.Configuration.GetConnectionString("Adesao")));
 builder.Services.AddScoped<ArquivoRepository>();
 builder.Services.AddScoped<EmpresaAdesaoRepository>();
+builder.Services.AddScoped<DocumentoDadosRepository>();
 
 // Pasta de origem (compartilhamento SMB em hml/prd) e leitura do nome.
 builder.Services.AddScoped<PastaOrigemExcel>();
 builder.Services.AddSingleton<NomeArquivoSimplificado>(); // regex compilada uma vez, reusada
 
-// Conversor de layout — a planilha vai no multipart, sem passar por
-// storage intermediário.
+// Preenchimento da planilha (ClosedXML) — sem estado mutável, singleton.
+builder.Services.AddSingleton<PreenchedorPlanilhaExcel>();
+
+// Conversor de layout — a planilha (já preenchida) vai no multipart, sem
+// passar por storage intermediário.
 builder.Services.AddHttpClient<ILayoutConversaoApiClient, LayoutConversaoApiClient>((sp, http) =>
 {
     var opt = sp.GetRequiredService<IOptionsMonitor<ApiClientOptions>>().Get("LayoutConversaoApi");
@@ -47,15 +52,6 @@ builder.Services.AddHttpClient<ILayoutConversaoApiClient, LayoutConversaoApiClie
     if (!string.IsNullOrWhiteSpace(opt.ApiKey))
         http.DefaultRequestHeaders.Add("X-Api-Key", opt.ApiKey);
 }).AddStandardResilienceHandler();
-
-// Armazenamento das cópias (Gestor de Arquivos + bucket S3, os dois ao
-// mesmo tempo). Recurso destacável: esta linha é tudo que o host sabe
-// dele — ver Armazenamento/ArmazenamentoServiceCollectionExtensions.cs.
-builder.Services.AdicionarArmazenamento(builder.Configuration);
-
-// Aviso de conclusão no tópico SNS. Mesmo desenho destacável do
-// armazenamento — ver Notificacao/NotificacaoServiceCollectionExtensions.cs.
-builder.Services.AdicionarNotificacao(builder.Configuration);
 
 // Pipeline.
 builder.Services.AddScoped<ProcessadorArquivoExcelService>();

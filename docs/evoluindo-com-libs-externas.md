@@ -2,14 +2,16 @@
 
 > **Nota:** o fluxo esboçado abaixo (remessa V/PV, D-1, consolidação,
 > conversão final) era o escopo de **retorno de cobrança**, que já não
-> existe neste repositório — o worker atual entrega planilhas ao conversor
-> (ver `README.md` raiz). Classes citadas abaixo como
-> `ArquivoRetornoWorkerPreview.cs` foram removidas.
+> existe neste repositório — o worker atual preenche planilhas com dados
+> de uma tabela e entrega o resultado ao conversor (ver `README.md`
+> raiz). Classes citadas abaixo como `ArquivoRetornoWorkerPreview.cs`
+> foram removidas.
 >
 > O guia continua válido como referência **conceitual**: a regra de
 > adaptador único por integração externa segue em vigor, hoje aplicada à
-> API HTTP de conversão (`ILayoutConversaoApiClient`) em vez de libs por
-> submodule.
+> API HTTP de conversão (`ILayoutConversaoApiClient`) e à biblioteca de
+> planilha (`Planilha/PreenchedorPlanilhaExcel.cs`, único lugar do worker
+> com `using ClosedXML.Excel`) em vez de libs por submodule.
 
 Guia para quando o worker precisar crescer na direção do fluxo esboçado em
 `ArquivoRetornoWorkerPreview.cs` — remessa + retorno pareados, consulta de

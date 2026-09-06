@@ -239,9 +239,11 @@ convenções já usadas neste projeto:
   `CobrancaLookup` isoladamente, rápido e sem infraestrutura.
 - **Skip suave contra SQL Server real**, só se precisar validar algo
   específico do provider (uma view complexa, uma stored procedure) que o
-  InMemory não reproduz fielmente — mesmo padrão de
-  `tests/CnabRetorno.Tests/Integracao/S3StorageArquivosIntegracaoTests.cs`:
-  tenta conectar, se não conseguir, o teste retorna sem falhar.
+  InMemory não reproduz fielmente: um teste de integração que tenta
+  conectar e, se não conseguir, retorna sem falhar. Este projeto não tem
+  um exemplo desse padrão hoje — `ModeloEfTests.cs` cobre a validação de
+  mapeamento sem conexão nenhuma, que é a rede de proteção realista
+  enquanto não há SQL Server nem no ambiente de testes.
 
 ## 7. Resumo do que muda no projeto
 

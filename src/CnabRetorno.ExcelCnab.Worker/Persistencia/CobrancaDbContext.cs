@@ -8,14 +8,20 @@ namespace CnabRetorno.ExcelCnab.Worker.Persistencia;
 /// mesmo padrão de docs/segunda-fonte-de-dados-sql-server.md: sem
 /// migrations daqui, tracking desligado por padrão.
 ///
-/// Uma entidade só, e é escrita: a linha que o robô cria em
-/// <c>Cobranca.Arquivo</c> pra cada planilha, antes de mandá-la ao
-/// conversor. <c>QueryTrackingBehavior.NoTracking</c> só afeta consultas —
-/// <c>Add</c> + <c>SaveChangesAsync</c> continuam funcionando normalmente.
+/// Duas entidades: <c>Cobranca.Arquivo</c>, que o robô escreve (a linha que
+/// cria pra cada planilha antes de mandá-la ao conversor), e
+/// <c>Cobranca.DocumentoDados</c>, que o robô só lê (os dados usados pra
+/// preencher a planilha antes do envio — ver
+/// <see cref="Persistencia.DocumentoDadosRepository"/>).
+/// <c>QueryTrackingBehavior.NoTracking</c> só afeta consultas —
+/// <c>Add</c> + <c>SaveChangesAsync</c> continuam funcionando normalmente
+/// pra <c>Arquivo</c>.
 /// </summary>
 public class CobrancaDbContext(DbContextOptions<CobrancaDbContext> options) : DbContext(options)
 {
     public DbSet<Arquivo> Arquivos => Set<Arquivo>();
+
+    public DbSet<DocumentoDados> DocumentosDados => Set<DocumentoDados>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         => optionsBuilder.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
@@ -42,6 +48,16 @@ public class CobrancaDbContext(DbContextOptions<CobrancaDbContext> options) : Db
             e.Property(a => a.DataAtualizacao).HasColumnName("DataAtualizacao");
             e.Property(a => a.ArquivoStatus).HasColumnName("ArquivoStatus");
             e.Property(a => a.ArquivoEtapa).HasColumnName("ArquivoEtapa");
+        });
+
+        // Tabela nova (ver deploy/criar-tabela-documento-dados.sql) — schema
+        // ainda TODO(a-confirmar), mesma ressalva de Core.Dominio.DocumentoDados.
+        mb.Entity<DocumentoDados>(e =>
+        {
+            e.ToTable("DocumentoDados", schema: "Cobranca");
+            e.HasKey(d => d.NumeroDocumento);
+            e.Property(d => d.NumeroDocumento).HasColumnName("NumeroDocumento").HasMaxLength(20);
+            e.Property(d => d.Dados).HasColumnName("Dados").HasColumnType("nvarchar(max)");
         });
     }
 }

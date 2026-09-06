@@ -65,30 +65,44 @@ public class PastaOrigemExcel(IOptions<OrigemOptions> opcoes, TimeProvider tempo
     public Task<byte[]> LerAsync(string caminho, CancellationToken ct)
         => File.ReadAllBytesAsync(caminho, ct);
 
-    public void MoverParaBackup(string caminho) => Mover(caminho, _opt.PastaBackup);
+    /// <summary>Grava a planilha já preenchida em Backup (não a original —
+    /// é o que de fato foi mandado ao conversor) e só depois apaga o
+    /// arquivo original da pasta de entrada.</summary>
+    public async Task GravarNoBackupAsync(string caminhoOriginal, byte[] conteudoFinal, CancellationToken ct)
+    {
+        var destino = ResolverDestinoSemSobrescrever(caminhoOriginal, _opt.PastaBackup);
+        await File.WriteAllBytesAsync(destino, conteudoFinal, ct);
+        File.Delete(caminhoOriginal);
+    }
 
     public void MoverParaQuarentena(string caminho) => Mover(caminho, _opt.PastaQuarentena);
 
     private void Mover(string caminho, string subpasta)
     {
+        var destino = ResolverDestinoSemSobrescrever(caminho, subpasta);
+        File.Move(caminho, destino, overwrite: false);
+    }
+
+    /// <summary>Nunca sobrescreve: o mesmo cliente manda
+    /// "Simplificado_<c>&lt;cnpj&gt;</c>" toda semana, sempre com o mesmo
+    /// nome — sobrescrever apagaria a planilha da semana passada em
+    /// silêncio, e na quarentena apagaria justamente a evidência do
+    /// problema. Homônimo ganha sufixo de timestamp.</summary>
+    private string ResolverDestinoSemSobrescrever(string caminhoOrigem, string subpasta)
+    {
         var destinoPasta = Path.Combine(_opt.Pasta, subpasta);
         Directory.CreateDirectory(destinoPasta);
 
-        // Nunca sobrescreve: o mesmo cliente manda "Simplificado_<cnpj>"
-        // toda semana, sempre com o mesmo nome — sobrescrever apagaria a
-        // planilha da semana passada em silêncio, e na quarentena apagaria
-        // justamente a evidência do problema. Homônimo ganha sufixo de
-        // timestamp.
-        var destino = Path.Combine(destinoPasta, Path.GetFileName(caminho));
+        var destino = Path.Combine(destinoPasta, Path.GetFileName(caminhoOrigem));
         if (File.Exists(destino))
         {
-            var nome = Path.GetFileNameWithoutExtension(caminho);
-            var extensao = Path.GetExtension(caminho);
+            var nome = Path.GetFileNameWithoutExtension(caminhoOrigem);
+            var extensao = Path.GetExtension(caminhoOrigem);
             destino = Path.Combine(
                 destinoPasta,
                 $"{nome}_{DateTime.UtcNow:yyyyMMddHHmmssfff}{extensao}");
         }
 
-        File.Move(caminho, destino, overwrite: false);
+        return destino;
     }
 }

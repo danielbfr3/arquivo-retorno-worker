@@ -64,4 +64,21 @@ public class ModeloEfTests
 
         Assert.NotNull(empresa.FindProperty(nameof(EmpresaAdesao.RazaoSocial)));
     }
+
+    [Fact]
+    public void DocumentoDados_deve_estar_mapeado_em_Cobranca_com_o_documento_como_chave()
+    {
+        // TODO(a-confirmar): schema é placeholder, mesma ressalva de
+        // Core.Dominio.DocumentoDados.
+        using var db = Cobranca();
+
+        var documentoDados = db.Model.FindEntityType(typeof(DocumentoDados))!;
+        var chave = documentoDados.FindPrimaryKey();
+
+        Assert.NotNull(chave);
+        Assert.Equal(["NumeroDocumento"], chave.Properties.Select(p => p.Name));
+        Assert.Equal("DocumentoDados", documentoDados.GetTableName());
+        Assert.Equal("Cobranca", documentoDados.GetSchema());
+        Assert.NotNull(documentoDados.FindProperty(nameof(DocumentoDados.Dados)));
+    }
 }

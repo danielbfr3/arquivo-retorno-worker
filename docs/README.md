@@ -16,9 +16,10 @@ Guias funcionais e de referência técnica do worker
 
 - [`cash-cobranca-referencia.md`](cash-cobranca-referencia.md) — schema da
   base `CASH_COBRANCA` e contratos das APIs do ecossistema. Do que está
-  ali, o worker usa `Cobranca.Arquivo` (§1.1) e o endpoint assíncrono do
-  conversor (§2.4); o resto fica como referência do schema real, não como
-  descrição do que o código faz.
+  ali, o worker usa `Cobranca.Arquivo` (§1.1, escrita), `Cobranca.DocumentoDados`
+  (leitura — tabela nova, ver `deploy/criar-tabela-documento-dados.sql`) e
+  o endpoint assíncrono do conversor (§2.4); o resto fica como referência
+  do schema real, não como descrição do que o código faz.
 - `Layout padrao CNAB240 V 10 11 - 21_08_2023-2.pdf` — o manual FEBRABAN
   completo. Este worker não escreve CNAB (quem faz é o pipeline
   `excel-cnab`), mas o manual continua sendo a referência do formato que

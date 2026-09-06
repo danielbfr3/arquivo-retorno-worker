@@ -14,7 +14,13 @@ public class PipelineOptions
     public int MaxArquivosConcorrentes { get; set; } = 8;
 }
 
-public sealed record ResumoVarredura(int Enviados, int NaoReconhecidos, int SemCliente, int Falhas);
+public sealed record ResumoVarredura(
+    int Enviados,
+    int NaoReconhecidos,
+    int SemCliente,
+    int SemDocumentoDados,
+    int ColunaNaoEncontrada,
+    int Falhas);
 
 /// <summary>
 /// Varre a pasta e processa cada planilha, isolando falhas: um arquivo que
@@ -44,14 +50,14 @@ public class EnviarPlanilhasPipeline(
         {
             logger.LogWarning(
                 "Varredura pulada — outra instância detém o lock '{Recurso}' (réplica concorrente?)", RecursoLock);
-            return new ResumoVarredura(0, 0, 0, 0);
+            return new ResumoVarredura(0, 0, 0, 0, 0, 0);
         }
 
         var pendentes = origem.ListarPendentes();
         if (pendentes.Count == 0)
         {
             logger.LogInformation("Nenhuma planilha pendente na pasta de origem");
-            return new ResumoVarredura(0, 0, 0, 0);
+            return new ResumoVarredura(0, 0, 0, 0, 0, 0);
         }
 
         logger.LogInformation("{Total} arquivo(s) pendente(s)", pendentes.Count);
@@ -84,11 +90,15 @@ public class EnviarPlanilhasPipeline(
             Enviados: resultados.Count(r => r == ResultadoEnvio.Enviado),
             NaoReconhecidos: resultados.Count(r => r == ResultadoEnvio.NaoReconhecido),
             SemCliente: resultados.Count(r => r == ResultadoEnvio.ClienteNaoEncontrado),
+            SemDocumentoDados: resultados.Count(r => r == ResultadoEnvio.DocumentoSemDados),
+            ColunaNaoEncontrada: resultados.Count(r => r == ResultadoEnvio.ColunaNaoEncontrada),
             Falhas: resultados.Count(r => r == ResultadoEnvio.Falhou));
 
         logger.LogInformation(
-            "Varredura concluída — {Enviados} enviada(s), {NaoReconhecidos} fora do padrão, {SemCliente} sem cliente na adesão, {Falhas} falha(s)",
-            resumo.Enviados, resumo.NaoReconhecidos, resumo.SemCliente, resumo.Falhas);
+            "Varredura concluída — {Enviados} enviada(s), {NaoReconhecidos} fora do padrão, {SemCliente} sem cliente na adesão, " +
+            "{SemDocumentoDados} sem dados na tabela, {ColunaNaoEncontrada} com coluna não encontrada, {Falhas} falha(s)",
+            resumo.Enviados, resumo.NaoReconhecidos, resumo.SemCliente,
+            resumo.SemDocumentoDados, resumo.ColunaNaoEncontrada, resumo.Falhas);
 
         return resumo;
     }
