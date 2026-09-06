@@ -26,9 +26,9 @@ public interface ILayoutConversaoApiClient
     /// <c>Cobranca.Arquivo</c> — o mesmo identificador em toda a cadeia,
     /// nunca um GUID novo por chamada.</param>
     /// <param name="metadadosCliente">JSON já serializado com os dados do
-    /// cliente (CNPJ e razão social vindos da base de adesão), enviado
-    /// como campo de texto do multipart. Ver
-    /// <see cref="MetadadosCliente"/>.</param>
+    /// cliente (CNPJ e razão social, ambos derivados de
+    /// <c>Cobranca.DocumentoDados</c>), enviado como campo de texto do
+    /// multipart. Ver <see cref="MetadadosCliente"/>.</param>
     Task<ConvertAsyncUploadResponse> EnviarParaConversaoAsync(
         byte[] arquivo,
         string nomeArquivo,

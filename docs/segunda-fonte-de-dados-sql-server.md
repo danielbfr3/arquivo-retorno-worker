@@ -5,10 +5,11 @@
 > abaixo — projeção sem chave sobre banco de outro time, sem migrations,
 > tracking desligado — está implementado de verdade em
 > `src/CnabRetorno.ExcelCnab.Worker/Persistencia/CobrancaDbContext.cs`
-> (base CASH_COBRANCA) e em
-> `src/CnabRetorno.ExcelCnab.Worker/Persistencia/AdesaoDbContext.cs`
-> (base de adesão) — duas bases de outros times no mesmo worker, cada uma
-> com seu `DbContext`.
+> (base CASH_COBRANCA, única fonte de dados do worker: `Cobranca.Arquivo` +
+> `Cobranca.DocumentoDados`, que inclui a razão social). Uma base de
+> adesão separada existiu neste worker num design anterior; foi removida —
+> a razão social agora vem do mesmo JSON de `Cobranca.DocumentoDados` (ver
+> `Core/Dominio/DocumentoDados.cs`, `ChaveRazaoSocial`).
 >
 > Mantido como referência conceitual; caminhos de arquivo abaixo
 > (`src/CnabRetorno.Worker/...`) e entidades citadas

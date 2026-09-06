@@ -8,8 +8,8 @@ que gera o CNAB.
 |---|---|
 | 1 | Varre a pasta de entrada (diretório local em dev, compartilhamento **SMB** em hml/prd) |
 | 2 | Lê o CNPJ do nome do arquivo — `Simplificado_<cnpj>.xlsx` |
-| 3 | Busca o cliente na base de **adesão** pra pegar a razão social |
-| 4 | Busca os dados de preenchimento em `Cobranca.DocumentoDados`, pelo mesmo CNPJ |
+| 3 | Busca os dados de preenchimento em `Cobranca.DocumentoDados`, pelo mesmo CNPJ — inclui a razão social, na chave reservada `"Razão Social"` |
+| 4 | Extrai a razão social do JSON — sem ela o envio é barrado |
 | 5 | Abre a planilha em memória e escreve cada valor do JSON na coluna cujo cabeçalho bate, em todas as linhas de dados |
 | 6 | Cria a linha do arquivo em `Cobranca.Arquivo`, com um `ArquivoID` novo — só depois que a planilha já foi preenchida com sucesso |
 | 7 | Envia a planilha **já preenchida** ao **conversor assíncrono** — pipeline `excel-cnab`, appId `cash-cobranca` —, com CNPJ e razão social em JSON no corpo da mensagem |
@@ -31,13 +31,13 @@ worker do ecossistema.
 src/
   CnabRetorno.Core/                 domínio + contratos (sem PackageReference)
     Aplicacao/                      interface e DTOs da API de conversão
-    Dominio/                        Arquivo, EmpresaAdesao, DocumentoDados
+    Dominio/                        Arquivo, DocumentoDados
   CnabRetorno.Common/               infra compartilhada
     Http/                           base HTTP (multipart + JSON)
   CnabRetorno.ExcelCnab.Worker/     o worker
     Origem/                         pasta de entrada, backup, quarentena, leitura do nome
     Planilha/                       preenchimento da planilha (ClosedXML)
-    Persistencia/                   CASH_COBRANCA (Arquivo + DocumentoDados) + base de adesão + lock entre réplicas
+    Persistencia/                   CASH_COBRANCA (Arquivo + DocumentoDados) + lock entre réplicas
     Http/                           client do conversor de layout
     Pipeline/                       varredura e processamento de um arquivo
 tests/CnabRetorno.Tests/
@@ -59,8 +59,8 @@ dotnet run --project src/CnabRetorno.ExcelCnab.Worker
 ```
 
 Pra experimentar localmente sem SQL Server nem o conversor, veja
-`deploy/setup-local.sh` — ele sobe as duas bases vazias e deixa uma
-planilha `.xlsx` de exemplo (`deploy/exemplos/`) na pasta de entrada.
+`deploy/setup-local.sh` — ele sobe a base vazia e deixa uma planilha
+`.xlsx` de exemplo (`deploy/exemplos/`) na pasta de entrada.
 
 Não há SQL Server nem as APIs externas neste ambiente — a verificação
 possível é build + testes de unidade. Os testes cobrem as partes puras
@@ -90,8 +90,7 @@ lugar de `:` (ex.: `Origem__Pasta`).
 | `RegistroArquivo:AppId` / `CriadoPor` | O que é gravado na linha de `Cobranca.Arquivo` |
 | `Worker:Modo` / `Cron` | `Loop` (residente, com cron interno) ou `CronJob` (roda e encerra) |
 | `Pipeline:MaxArquivosConcorrentes` | Quantos arquivos em paralelo — um escopo de DI por arquivo |
-| `ConnectionStrings:Cobranca` | CASH_COBRANCA — `Cobranca.Arquivo` (escrita) e `Cobranca.DocumentoDados` (leitura) |
-| `ConnectionStrings:Adesao` | Base de adesão (**schema inteiro em aberto**) |
+| `ConnectionStrings:Cobranca` | CASH_COBRANCA — `Cobranca.Arquivo` (escrita) e `Cobranca.DocumentoDados` (leitura, inclui a razão social) |
 
 ## Antes de homologação
 
@@ -100,12 +99,11 @@ marcados com `TODO(a-confirmar)` e listados em
 [`docs/regras-de-negocio.md`](docs/regras-de-negocio.md#em-aberto). Os
 mais críticos:
 
-- **Schema da base de adesão** — nome de schema, tabela e colunas são
-  chute; a base nunca foi inspecionada. É caminho crítico de **todo**
-  arquivo: sem razão social nada é enviado.
 - **Schema de `Cobranca.DocumentoDados`** — tabela nova, dona de outro
   sistema; ver `deploy/criar-tabela-documento-dados.sql`. Formato exato de
-  `NumeroDocumento` (14 dígitos sem pontuação?) ainda não confirmado.
+  `NumeroDocumento` (14 dígitos sem pontuação?) ainda não confirmado. É
+  caminho crítico de **todo** arquivo: sem a chave `"Razão Social"` no
+  JSON, nada é enviado.
 - **Nome do campo de metadados** no multipart — `metadata` é suposição. Um
   campo que o conversor não conhece é ignorado em silêncio, e o upload
   ainda assim é aceito.

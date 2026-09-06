@@ -2,14 +2,13 @@
 # Sobe as dependências locais e deixa uma planilha de exemplo pronta na
 # pasta de entrada.
 #
-# As duas bases são de outros times — este script sobe containers vazios;
-# criar o schema é passo manual (ver docs/cash-cobranca-referencia.md pro
-# CASH_COBRANCA; o schema da base de adesão ainda está em aberto).
+# A base é de outro time — este script sobe um container vazio; criar o
+# schema é passo manual (ver docs/cash-cobranca-referencia.md).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "==> Subindo SQL Server (CASH_COBRANCA e base de adesão)..."
+echo "==> Subindo SQL Server (CASH_COBRANCA)..."
 docker compose -f docker-compose.local.yml up -d
 
 echo "==> Copiando planilha de exemplo pra pasta de entrada..."
@@ -28,30 +27,27 @@ cat <<'TXT'
 
 ==> Falta, pra rodar de ponta a ponta:
 
-    1. Criar o schema nos containers locais:
+    1. Criar o schema no container local:
        - Cobranca.Arquivo         (ver docs/cash-cobranca-referencia.md §1.1)
        - Cobranca.DocumentoDados  (ver deploy/criar-tabela-documento-dados.sql)
-       - a tabela da base de adesão com Documento e RazaoSocial
-         (schema real ainda em aberto — ver Persistencia/AdesaoDbContext.cs)
 
-    2. Inserir a linha do cliente 12345678000199 na base de adesão, senão
-       o arquivo de exemplo vai direto pra Quarentena por "cliente não
-       encontrado".
-
-    3. Inserir uma linha em Cobranca.DocumentoDados pro mesmo CNPJ, com um
-       Dados cujas chaves batem com os cabeçalhos da planilha de exemplo
-       ("Nome Cliente" e "Valor"):
+    2. Inserir uma linha em Cobranca.DocumentoDados pro CNPJ
+       12345678000199, com um Dados cujas chaves batem com os cabeçalhos
+       da planilha de exemplo ("Nome Cliente", "Valor" e "Razão Social" —
+       esta última é a chave reservada de
+       DocumentoDados.ChaveRazaoSocial):
 
            INSERT INTO Cobranca.DocumentoDados (NumeroDocumento, Dados)
            VALUES (
              '12345678000199',
-             N'{"Nome Cliente": "ACME DISTRIBUIDORA LTDA", "Valor": "1500.00"}'
+             N'{"Nome Cliente": "ACME DISTRIBUIDORA LTDA", "Valor": "1500.00", "Razão Social": "ACME DISTRIBUIDORA LTDA"}'
            );
 
        Sem essa linha, o arquivo vai pra quarentena por "documento sem
-       dados".
+       dados"; sem a chave "Razão Social" (ou com ela vazia), vai pra
+       quarentena por "cliente não encontrado".
 
-    4. Apontar o conversor em appsettings.json — hoje está como
+    3. Apontar o conversor em appsettings.json — hoje está como
        TODO(a-confirmar):
        - LayoutConversaoApi:BaseUrl
        - Conversao:CampoMetadados  (nome do campo do JSON no multipart)

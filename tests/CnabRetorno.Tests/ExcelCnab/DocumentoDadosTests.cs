@@ -33,4 +33,43 @@ public class DocumentoDadosTests
     [InlineData("{}")]
     public void Devolve_null_para_json_invalido_ou_sem_nada_a_preencher(string dados)
         => Assert.Null(Criar(dados).DesserializarDados());
+
+    [Fact]
+    public void ObterRazaoSocial_encontra_pela_chave_reservada()
+    {
+        var valores = Criar("""{"Nome Cliente": "ACME LTDA", "Razão Social": "ACME DISTRIBUIDORA LTDA"}""")
+            .DesserializarDados()!;
+
+        Assert.Equal("ACME DISTRIBUIDORA LTDA", DocumentoDados.ObterRazaoSocial(valores));
+    }
+
+    [Theory]
+    [InlineData("razão social")]
+    [InlineData("RAZÃO SOCIAL")]
+    [InlineData("  Razão Social  ")]
+    public void ObterRazaoSocial_e_tolerante_a_caixa_e_espaco_na_chave(string chave)
+    {
+        var valores = new Dictionary<string, string> { [chave] = "ACME DISTRIBUIDORA LTDA" };
+
+        Assert.Equal("ACME DISTRIBUIDORA LTDA", DocumentoDados.ObterRazaoSocial(valores));
+    }
+
+    [Fact]
+    public void ObterRazaoSocial_devolve_null_quando_a_chave_nao_existe()
+    {
+        var valores = Criar("""{"Nome Cliente": "ACME LTDA"}""").DesserializarDados()!;
+
+        Assert.Null(DocumentoDados.ObterRazaoSocial(valores));
+    }
+
+    [Fact]
+    public void ObterRazaoSocial_devolve_null_quando_o_valor_e_vazio_ou_espacos()
+    {
+        var valores = Criar("""{"Razão Social": "   "}""").DesserializarDados();
+
+        // Objeto com uma única chave de valor vazio ainda desserializa
+        // (não é o caso "objeto vazio" tratado por DesserializarDados).
+        Assert.NotNull(valores);
+        Assert.Null(DocumentoDados.ObterRazaoSocial(valores));
+    }
 }

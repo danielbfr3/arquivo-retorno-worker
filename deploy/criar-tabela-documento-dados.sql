@@ -11,7 +11,13 @@
 --
 -- Dados é um objeto JSON plano: cada chave é o cabeçalho de uma coluna da
 -- planilha do documento, e o valor é o que deve ser escrito naquela
--- coluna. Ex.: {"Nome Cliente": "ACME LTDA", "Valor": "1500.00"}.
+-- coluna. Ex.: {"Nome Cliente": "ACME LTDA", "Valor": "1500.00",
+-- "Razão Social": "ACME DISTRIBUIDORA LTDA"}.
+--
+-- A chave "Razão Social" é reservada (ver
+-- CnabRetorno.Core/Dominio/DocumentoDados.cs, ChaveRazaoSocial): além de
+-- preencher a coluna homônima, é a fonte da razão social enviada ao
+-- conversor. Não existe mais uma base de adesão separada para isso.
 IF NOT EXISTS (
     SELECT 1
     FROM sys.tables t

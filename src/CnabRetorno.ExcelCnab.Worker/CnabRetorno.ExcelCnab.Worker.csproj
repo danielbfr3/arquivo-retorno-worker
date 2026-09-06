@@ -16,8 +16,8 @@
     <PackageReference Include="Cronos" Version="0.10.0" />
     <!--
       Grava a linha do arquivo em Cobranca.Arquivo (base CASH_COBRANCA) e
-      lê a razão social do cliente na base de adesão, além da nova tabela
-      Cobranca.DocumentoDados (numero de documento + JSON de dados).
+      lê Cobranca.DocumentoDados (numero de documento + JSON de dados,
+      incluindo a razão social — ver DocumentoDados.ChaveRazaoSocial).
     -->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />

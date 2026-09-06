@@ -24,15 +24,13 @@ builder.Services.Configure<ApiClientOptions>(
 
 builder.Services.AddSingleton(TimeProvider.System);
 
-// Persistência — duas bases de outros times, nenhuma migration daqui.
+// Persistência — base de outro time, nenhuma migration daqui.
 // CASH_COBRANCA: escreve a linha do arquivo e lê Cobranca.DocumentoDados
-// (dados de preenchimento). Adesão: lê a razão social.
+// (dados de preenchimento, incluindo a razão social — ver
+// DocumentoDados.ChaveRazaoSocial).
 builder.Services.AddDbContext<CobrancaDbContext>(opt =>
     opt.UseSqlServer(builder.Configuration.GetConnectionString("Cobranca")));
-builder.Services.AddDbContext<AdesaoDbContext>(opt =>
-    opt.UseSqlServer(builder.Configuration.GetConnectionString("Adesao")));
 builder.Services.AddScoped<ArquivoRepository>();
-builder.Services.AddScoped<EmpresaAdesaoRepository>();
 builder.Services.AddScoped<DocumentoDadosRepository>();
 
 // Pasta de origem (compartilhamento SMB em hml/prd) e leitura do nome.

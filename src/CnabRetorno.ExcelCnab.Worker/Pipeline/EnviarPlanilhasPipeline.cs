@@ -95,7 +95,7 @@ public class EnviarPlanilhasPipeline(
             Falhas: resultados.Count(r => r == ResultadoEnvio.Falhou));
 
         logger.LogInformation(
-            "Varredura concluída — {Enviados} enviada(s), {NaoReconhecidos} fora do padrão, {SemCliente} sem cliente na adesão, " +
+            "Varredura concluída — {Enviados} enviada(s), {NaoReconhecidos} fora do padrão, {SemCliente} sem razão social, " +
             "{SemDocumentoDados} sem dados na tabela, {ColunaNaoEncontrada} com coluna não encontrada, {Falhas} falha(s)",
             resumo.Enviados, resumo.NaoReconhecidos, resumo.SemCliente,
             resumo.SemDocumentoDados, resumo.ColunaNaoEncontrada, resumo.Falhas);

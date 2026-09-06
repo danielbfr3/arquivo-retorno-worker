@@ -32,28 +32,7 @@ Confirmar antes de qualquer deploy.
 
 ---
 
-## 2. Schema da base de adesão é placeholder completo
-
-**Bloqueante pra produção.**
-
-`AdesaoDbContext` mapeia `Adesao.Empresa` com colunas `Documento` e
-`RazaoSocial` — nome de schema, de tabela e de coluna são chute; a base
-nunca foi inspecionada.
-
-**Cenário:** o mapeamento não bate com o schema real. A primeira consulta
-estoura em runtime, no cluster — o EF só abre conexão na primeira query, e
-`ModeloEfTests` valida o modelo, não o schema do servidor.
-
-**Impacto:** ela é **caminho crítico de todo arquivo**: sem razão social
-nenhuma planilha é processada, e a pasta acumula quarentena silenciosamente
-enquanto o log grita.
-
-**Decisão:** um único ponto de ajuste (`AdesaoDbContext.OnModelCreating` +
-`Core/Dominio/EmpresaAdesao.cs`). Conferir antes de subir pra homologação.
-
----
-
-## 3. Schema de `Cobranca.DocumentoDados` é placeholder
+## 2. Schema de `Cobranca.DocumentoDados` é placeholder
 
 **Bloqueante pra produção.**
 
@@ -61,29 +40,38 @@ A tabela é nova e nunca foi inspecionada num ambiente real. O mapeamento
 em `CobrancaDbContext` (`NumeroDocumento` varchar(20), `Dados`
 nvarchar(max)) e o script de referência em
 `deploy/criar-tabela-documento-dados.sql` são o que este worker espera —
-não necessariamente o que o time dono da tabela vai criar.
+não necessariamente o que o time dono da tabela vai criar. Isso inclui a
+chave `"Razão Social"` (`Core/Dominio/DocumentoDados.ChaveRazaoSocial`),
+que só existe como convenção deste worker, não como coluna própria da
+tabela — depende de quem popula `Dados` incluir essa chave no JSON.
 
 **Cenário:** o formato de `NumeroDocumento` gravado por quem popula a
 tabela não bate com o CNPJ de 14 dígitos extraído do nome do arquivo (por
 exemplo, vem pontuado, ou com outro identificador). Toda busca falha, e
 todo arquivo vai pra quarentena por "documento sem dados" — silenciosamente
 correto do ponto de vista do código, mas nenhuma planilha é processada.
+Do mesmo jeito, se `Dados` existir mas sem a chave `"Razão Social"` (ou com
+ela vazia), o arquivo vai pra quarentena por "cliente não encontrado" — é
+**caminho crítico de todo arquivo**: sem razão social nenhuma planilha é
+enviada.
 
 **Decisão:** um único ponto de ajuste
 (`CobrancaDbContext.OnModelCreating` + `Core/Dominio/DocumentoDados.cs`).
-Confirmar com o time dono antes de homologar.
+Confirmar com o time dono antes de homologar — schema da tabela e a
+convenção da chave `"Razão Social"`.
 
 ---
 
-## 4. Cliente sem razão social barra o envio
+## 3. Cliente sem razão social barra o envio
 
 **Decisão consciente, com efeito colateral conhecido.**
 
-Se o CNPJ não está na base de adesão — ou está com a razão social vazia —
-a planilha vai pra quarentena e **não** é processada.
+Se `Cobranca.DocumentoDados.Dados` não tem a chave `"Razão Social"` — ou
+ela vem vazia — a planilha vai pra quarentena e **não** é processada.
 
-**Cenário:** cliente novo, planilha depositada antes de o cadastro de
-adesão existir. O arquivo fica parado na quarentena até alguém notar.
+**Cenário:** cliente novo, planilha depositada antes de quem popula
+`Cobranca.DocumentoDados` incluir a razão social daquele CNPJ. O arquivo
+fica parado na quarentena até alguém notar.
 
 **Alternativa descartada:** enviar com razão social vazia. O JSON é
 contrato com o conversor, e um arquivo identificado pela metade é pior que
@@ -95,7 +83,7 @@ arquivo. Reprocessar é mover o arquivo de volta pra pasta de entrada.
 
 ---
 
-## 5. Nome do campo de metadados não foi confirmado
+## 4. Nome do campo de metadados não foi confirmado
 
 O contrato registrado em `cash-cobranca-referencia.md` §2.4 lista só
 `file`, `appId`, `pipeline` e `id`. O campo que carrega o JSON com CNPJ e
@@ -114,7 +102,7 @@ homologar.
 
 ---
 
-## 6. Retry automático reenvia o POST
+## 5. Retry automático reenvia o POST
 
 `AddStandardResilienceHandler()` faz retry de falhas transitórias. Num
 POST que cria trabalho do outro lado, isso é reenvio.
@@ -129,7 +117,7 @@ idempotência do conversor, que não foi confirmada.
 
 ---
 
-## 7. Duas planilhas do mesmo cliente em ciclos diferentes
+## 6. Duas planilhas do mesmo cliente em ciclos diferentes
 
 Não há deduplicação por conteúdo. O que evita reprocessar o mesmo arquivo
 é ele sair da pasta (Backup) ao fim do ciclo.
@@ -143,7 +131,7 @@ deduplicar por conteúdo faria o robô **ignorar** um reenvio intencional.
 
 ---
 
-## 8. Crash entre o preenchimento e o envio
+## 7. Crash entre o preenchimento e o envio
 
 A linha em `Cobranca.Arquivo` é criada **depois** que a planilha foi
 preenchida com sucesso e **antes** da chamada ao conversor. Se o pod
@@ -164,7 +152,7 @@ CNAB pronto e não teria onde se ancorar.
 
 ---
 
-## 9. `ClienteTipoDocumento` derivado do tamanho
+## 8. `ClienteTipoDocumento` derivado do tamanho
 
 `ClienteTipoDocumento` é `2` (CNPJ) quando o documento tem 14 dígitos e
 `1` (CPF) caso contrário — domínio G005 do FEBRABAN.
@@ -175,7 +163,7 @@ aceitar CPF; hoje é código sem caminho vivo, não um risco ativo.
 
 ---
 
-## 10. Testes não cobrem o caminho de I/O
+## 9. Testes não cobrem o caminho de I/O
 
 A suíte cobre a lógica pura: leitura do nome do arquivo, preenchimento da
 planilha em memória (`PreenchedorPlanilhaExcelTests`, com casos de sucesso
@@ -184,7 +172,7 @@ construção do modelo EF.
 
 **O que fica descoberto:** a varredura da pasta (incluindo o
 comportamento sobre SMB), a leitura/gravação de bytes em Backup/Quarentena,
-a chamada HTTP real, o `sp_getapplock` e as duas conexões de banco.
+a chamada HTTP real, o `sp_getapplock` e a conexão de banco.
 
 **Por quê:** não há SQL Server nem as APIs externas neste ambiente. Um
 teste com mock de `HttpClient` verificaria o mock, não o contrato.
@@ -194,7 +182,7 @@ pega erro de modelo, não erro de schema.
 
 ---
 
-## 11. Comparação de cabeçalho tolerante pode mascarar erro de digitação
+## 10. Comparação de cabeçalho tolerante pode mascarar erro de digitação
 
 `Preenchimento:ComparacaoCabecalho` padrão (`IgnorarCaixaEEspacos`) só
 remove espaço nas **pontas** e ignora caixa — não normaliza espaço
@@ -213,7 +201,7 @@ espaços internos — mudança isolada em `PreenchedorPlanilhaExcel.Normalizar`.
 
 ---
 
-## 12. Licença transitiva do ClosedXML (`SixLabors.Fonts`)
+## 11. Licença transitiva do ClosedXML (`SixLabors.Fonts`)
 
 O ClosedXML traz `SixLabors.Fonts` como dependência transitiva, que tem
 licença própria (Six Labors Split License — gratuita para a maioria dos
@@ -229,7 +217,7 @@ só no gerador do arquivo de exemplo em `deploy/exemplos/`, fora do worker).
 
 ---
 
-## 13. SMB não se comporta como disco local
+## 12. SMB não se comporta como disco local
 
 A pasta de origem é um compartilhamento montado no pod. Coisas que num
 diretório local não acontecem e ali acontecem: `File.GetLastWriteTimeUtc`

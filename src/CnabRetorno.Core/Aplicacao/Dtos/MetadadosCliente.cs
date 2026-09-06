@@ -5,8 +5,9 @@ namespace CnabRetorno.Core.Aplicacao.Dtos;
 
 /// <summary>
 /// Os dados do cliente que acompanham a planilha na chamada do conversor —
-/// o "corpo da mensagem" em JSON: CNPJ e razão social recuperados da base
-/// de adesão a partir do CNPJ que veio no nome do arquivo.
+/// o "corpo da mensagem" em JSON: CNPJ (do nome do arquivo) e razão social
+/// (chave <c>DocumentoDados.ChaveRazaoSocial</c> no mesmo JSON de
+/// <c>Cobranca.DocumentoDados</c> que preenche a planilha).
 ///
 /// Vai como campo de texto do multipart (nome do campo em
 /// <c>Conversao:CampoMetadados</c>), e não no corpo da requisição: o

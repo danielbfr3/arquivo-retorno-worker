@@ -24,9 +24,9 @@ public sealed record PlanilhaProcessada(ResultadoEnvio Resultado, Guid? ArquivoI
 ///
 /// <list type="number">
 ///   <item>lê o CNPJ do nome do arquivo (<c>Simplificado_{cnpj}.xlsx</c>);</item>
-///   <item>busca o cliente na base de adesão pra saber a razão social;</item>
 ///   <item>busca os dados de preenchimento em <c>Cobranca.DocumentoDados</c>,
-///   pelo mesmo CNPJ;</item>
+///   pelo mesmo CNPJ — inclui a razão social, na chave reservada
+///   <see cref="DocumentoDados.ChaveRazaoSocial"/>;</item>
 ///   <item>abre a planilha em memória e escreve cada valor do JSON de dados
 ///   na coluna cujo cabeçalho bate, em todas as linhas de dados;</item>
 ///   <item>cria a linha em <c>Cobranca.Arquivo</c> com um ArquivoID novo —
@@ -38,6 +38,10 @@ public sealed record PlanilhaProcessada(ResultadoEnvio Resultado, Guid? ArquivoI
 ///   da pasta de entrada.</item>
 /// </list>
 ///
+/// Não existe mais uma base de adesão separada: a razão social vem do
+/// mesmo JSON de <c>Cobranca.DocumentoDados</c> que preenche a planilha —
+/// uma única fonte de dados do cliente, não duas.
+///
 /// A ordem "preenche, registra, depois envia" não é estética: o conversor é
 /// assíncrono e a conclusão chega depois, correlacionada pelo ArquivoID —
 /// se a linha não existir, a conclusão chega sem ter onde se ancorar
@@ -48,7 +52,6 @@ public sealed record PlanilhaProcessada(ResultadoEnvio Resultado, Guid? ArquivoI
 public class ProcessadorArquivoExcelService(
     PastaOrigemExcel origem,
     NomeArquivoSimplificado nomes,
-    EmpresaAdesaoRepository adesao,
     DocumentoDadosRepository documentoDados,
     PreenchedorPlanilhaExcel preenchedor,
     ArquivoRepository arquivos,
@@ -68,23 +71,7 @@ public class ProcessadorArquivoExcelService(
             return new PlanilhaProcessada(ResultadoEnvio.NaoReconhecido);
         }
 
-        // 2. Dados do cliente na base de adesão. Sem razão social não há o
-        //    que mandar no corpo da mensagem — o arquivo espera na
-        //    quarentena até o cadastro existir, em vez de ir ao conversor
-        //    identificado pela metade.
-        var empresa = await adesao.ObterPorDocumentoAsync(reconhecido.Cnpj, ct);
-        if (empresa is null || string.IsNullOrWhiteSpace(empresa.RazaoSocial))
-        {
-            logger.LogError(
-                "Cliente {Cnpj} {Motivo} na base de adesão — arquivo {Nome} movido pra quarentena, sem envio",
-                reconhecido.Cnpj,
-                empresa is null ? "não encontrado" : "sem razão social",
-                pendente.Nome);
-            origem.MoverParaQuarentena(pendente.Caminho);
-            return new PlanilhaProcessada(ResultadoEnvio.ClienteNaoEncontrado, Cnpj: reconhecido.Cnpj);
-        }
-
-        // 3. Dados de preenchimento em Cobranca.DocumentoDados — só leitura,
+        // 2. Dados de preenchimento em Cobranca.DocumentoDados — só leitura,
         //    quem popula é outro sistema. Sem linha, ou JSON inválido/vazio,
         //    não há o que escrever na planilha.
         var valores = await ObterValoresParaPreencherAsync(reconhecido.Cnpj, ct);
@@ -95,6 +82,21 @@ public class ProcessadorArquivoExcelService(
                 reconhecido.Cnpj, pendente.Nome);
             origem.MoverParaQuarentena(pendente.Caminho);
             return new PlanilhaProcessada(ResultadoEnvio.DocumentoSemDados, Cnpj: reconhecido.Cnpj);
+        }
+
+        // 3. Razão social — chave reservada dentro do mesmo JSON. Sem ela
+        //    não há o que mandar no corpo da mensagem do conversor — o
+        //    arquivo espera na quarentena até o dado existir, em vez de ir
+        //    ao conversor identificado pela metade.
+        var razaoSocial = DocumentoDados.ObterRazaoSocial(valores);
+        if (razaoSocial is null)
+        {
+            logger.LogError(
+                "Documento {Cnpj} sem razão social (chave \"{Chave}\") em Cobranca.DocumentoDados.Dados — " +
+                "arquivo {Nome} movido pra quarentena, sem envio",
+                reconhecido.Cnpj, DocumentoDados.ChaveRazaoSocial, pendente.Nome);
+            origem.MoverParaQuarentena(pendente.Caminho);
+            return new PlanilhaProcessada(ResultadoEnvio.ClienteNaoEncontrado, Cnpj: reconhecido.Cnpj);
         }
 
         var conteudoOriginal = await origem.LerAsync(pendente.Caminho, ct);
@@ -124,7 +126,7 @@ public class ProcessadorArquivoExcelService(
         var arquivoId = Guid.NewGuid();
         await arquivos.RegistrarAsync(arquivoId, pendente.Nome, reconhecido.Cnpj, ct);
 
-        var metadados = new MetadadosCliente(reconhecido.Cnpj, empresa.RazaoSocial.Trim()).Serializar();
+        var metadados = new MetadadosCliente(reconhecido.Cnpj, razaoSocial).Serializar();
 
         ConvertAsyncUploadResponse aceite;
         try
@@ -158,7 +160,7 @@ public class ProcessadorArquivoExcelService(
 
         logger.LogInformation(
             "Planilha {Nome} do cliente {Cnpj} ({RazaoSocial}) preenchida e enviada pra conversão — ArquivoID {ArquivoId}, job {JobId}",
-            pendente.Nome, reconhecido.Cnpj, empresa.RazaoSocial, arquivoId, aceite.JobId ?? "<sem jobId>");
+            pendente.Nome, reconhecido.Cnpj, razaoSocial, arquivoId, aceite.JobId ?? "<sem jobId>");
 
         return new PlanilhaProcessada(ResultadoEnvio.Enviado, arquivoId, reconhecido.Cnpj);
     }

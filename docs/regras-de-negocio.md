@@ -12,7 +12,7 @@ faz o CNAB. Compartilha o `CnabRetorno.Core` (domínio e contratos) e o
 | O que faz | Preenche e entrega ao conversor as planilhas depositadas numa pasta, identificando o documento pelo nome do arquivo |
 | Gatilho | Varredura periódica (cron) |
 | Origem | Pasta local em dev; compartilhamento **SMB** montado no pod em hml/prd |
-| Bases | `CASH_COBRANCA` (escreve `Cobranca.Arquivo`, lê `Cobranca.DocumentoDados`) e a base de **adesão** (lê razão social) |
+| Bases | `CASH_COBRANCA` — escreve `Cobranca.Arquivo`, lê `Cobranca.DocumentoDados` (dados de preenchimento, inclui a razão social) |
 | Converte? | Não faz a conversão — **entrega** ao conversor assíncrono, pipeline `excel-cnab`, appId `cash-cobranca`, a planilha já preenchida |
 | Preenchimento | Cada chave do JSON de `Cobranca.DocumentoDados.Dados` vira o valor de uma coluna (casada pelo cabeçalho da linha 1) em todas as linhas de dados da planilha |
 | Storage | Nenhum — a planilha preenchida vai direto no multipart da chamada ao conversor e é gravada em `Backup` no fim |
@@ -27,11 +27,11 @@ flowchart TD
     A[Varre a pasta] --> B{Nome casa com<br/>Simplificado_&lt;cnpj&gt;.xlsx?}
     B -- não --> Q1[Quarentena — NaoReconhecido]
     B -- sim --> C[Extrai o CNPJ do nome]
-    C --> D{Cliente na base de adesão,<br/>com razão social?}
-    D -- não --> Q2[Quarentena — ClienteNaoEncontrado]
-    D -- sim --> E{Linha em Cobranca.DocumentoDados<br/>pro CNPJ, com JSON válido?}
+    C --> E{Linha em Cobranca.DocumentoDados<br/>pro CNPJ, com JSON válido?}
     E -- não --> Q3[Quarentena — DocumentoSemDados]
-    E -- sim --> F[Lê os bytes originais]
+    E -- sim --> D{JSON tem a chave<br/>"Razão Social", não vazia?}
+    D -- não --> Q2[Quarentena — ClienteNaoEncontrado]
+    D -- sim --> F[Lê os bytes originais]
     F --> G[Abre em memória e casa cada chave<br/>do JSON com um cabeçalho da linha 1]
     G -- alguma chave sem coluna --> Q4[Quarentena — ColunaNaoEncontrada<br/>bytes ORIGINAIS, nada registrado]
     G -- todas batem --> H[Escreve o valor em todas<br/>as linhas de dados 2..N]
@@ -52,13 +52,21 @@ O corpo da mensagem enviado ao conversor:
 E o JSON de `Cobranca.DocumentoDados.Dados` que orienta o preenchimento:
 
 ```jsonc
-{ "Nome Cliente": "ACME DISTRIBUIDORA LTDA", "Valor": "1500.00" }
+{
+  "Nome Cliente": "ACME DISTRIBUIDORA LTDA",
+  "Valor": "1500.00",
+  "Razão Social": "ACME DISTRIBUIDORA LTDA"
+}
 ```
 
 Cada chave é comparada (por padrão ignorando caixa e espaço) com os
 cabeçalhos da linha 1 da planilha; o valor correspondente é escrito, como
 texto, em todas as linhas de dados existentes — o documento é o mesmo em
-todo o arquivo, então o valor se repete.
+todo o arquivo, então o valor se repete. A chave `"Razão Social"` é
+reservada (`Core/Dominio/DocumentoDados.ChaveRazaoSocial`): além de
+preencher a coluna homônima como qualquer outra, é também a fonte da
+razão social no `metadata` acima — não existe mais uma base de adesão
+separada para isso.
 
 "Terminei o processamento" aqui quer dizer: a planilha foi preenchida,
 aceita pelo conversor e saiu da pasta de entrada. **Não** quer dizer que o
@@ -76,8 +84,8 @@ conversor, que chega depois. O `arquivoId` é o mesmo em toda a cadeia
 | Nome | Máscara configurável, padrão `Simplificado_{cnpj}`, extensão `.xlsx` (só — o ClosedXML não abre `.xls`). Casamento **exato**: sufixo, prefixo ou nome parecido não passa. | `Origem/NomeArquivoSimplificado.cs` |
 | Nome | O CNPJ pode vir pontuado (`12.345.678.0001-99`) e é normalizado pra 14 dígitos. A barra do CNPJ canônico não entra: é caractere proibido em nome de arquivo. | idem |
 | Nome | O CNPJ do nome é a **única** identificação do documento antes de abrir a planilha. Nome fora do padrão vai pra quarentena, nunca vira palpite — preencher a planilha de um cliente com o CNPJ de outro é pior que não preencher. | idem |
-| Cliente | Razão social vem da base de adesão, pelo CNPJ. Cliente ausente (ou sem razão social) **barra** o envio: é parte do payload que o conversor recebe. Vai pra quarentena com log de erro. | `Persistencia/EmpresaAdesaoRepository.cs` |
 | Dados de preenchimento | Vêm de `Cobranca.DocumentoDados`, pelo mesmo CNPJ — tabela só de leitura, populada por outro sistema. Sem linha, JSON malformado ou JSON vazio (`{}`) tratam-se como "documento sem dados": quarentena. | `Persistencia/DocumentoDadosRepository.cs` (busca) e `Core/Dominio/DocumentoDados.DesserializarDados()` (parsing do JSON) |
+| Cliente | Razão social vem da chave reservada `"Razão Social"` no mesmo JSON de `Cobranca.DocumentoDados`. Chave ausente (ou valor vazio) **barra** o envio: é parte do payload que o conversor recebe. Vai pra quarentena com log de erro. | `Core/Dominio/DocumentoDados.ObterRazaoSocial()` |
 | Preenchimento | Cada chave do JSON precisa bater com **algum** cabeçalho da linha 1. Uma chave sem coluna correspondente rejeita a planilha inteira — nada é registrado nem enviado, e o arquivo original vai pra quarentena intacto. | `Planilha/PreenchedorPlanilhaExcel.cs` |
 | Preenchimento | Comparação de cabeçalho ignora caixa e espaço por padrão (`Preenchimento:ComparacaoCabecalho`). Dois cabeçalhos que colidem na mesma chave normalizada também são tratados como erro (ambíguo). | idem |
 | Preenchimento | O valor é sempre escrito como **texto**, nunca deixando a lib inferir tipo — evita perder zero à esquerda em campos como agência/conta/CNPJ. | idem |
@@ -122,8 +130,7 @@ Dados de integração que ninguém confirmou — todos marcados com
 
 | O quê | Onde | Se estiver errado |
 |---|---|---|
-| **Schema da base de adesão** (nome de schema, tabela e colunas) | `Persistencia/AdesaoDbContext.cs` | Nenhuma planilha é processada — é caminho crítico de todo arquivo |
-| **Schema de `Cobranca.DocumentoDados`** (formato de `NumeroDocumento`, uma linha por documento) | `Core/Dominio/DocumentoDados.cs`, `deploy/criar-tabela-documento-dados.sql` | A busca por CNPJ não bate com o que o time dono grava, e todo arquivo vai pra "documento sem dados" |
+| **Schema de `Cobranca.DocumentoDados`** (formato de `NumeroDocumento`, uma linha por documento, e se a chave `"Razão Social"` é de fato populada por quem escreve a tabela) | `Core/Dominio/DocumentoDados.cs`, `deploy/criar-tabela-documento-dados.sql` | A busca por CNPJ não bate com o que o time dono grava (todo arquivo vai pra "documento sem dados"), ou a chave de razão social não vem preenchida (todo arquivo vai pra "cliente não encontrado") — em ambos os casos é caminho crítico de todo arquivo |
 | **Nome do campo de metadados** no multipart (hoje `metadata`) | `Conversao:CampoMetadados` | O conversor recebe o arquivo sem os dados do cliente |
 | **Valores numéricos** de `ArquivoStatus`/`ArquivoEtapa` | `Core/Dominio/Arquivo.cs` | Corrompe o rastreamento de arquivo do ecossistema CASH inteiro |
 | **Base URL do conversor** | `LayoutConversaoApi:BaseUrl` | Nenhuma chamada sai |

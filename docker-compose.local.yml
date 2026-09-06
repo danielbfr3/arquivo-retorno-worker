@@ -1,7 +1,8 @@
 # Dependências locais do worker.
 #
-# - cobranca-sqlserver: emula a base CASH_COBRANCA (Cobranca.Arquivo)
-# - adesao-sqlserver:   emula a base de adesão (razão social do cliente)
+# - cobranca-sqlserver: emula a base CASH_COBRANCA (Cobranca.Arquivo +
+#   Cobranca.DocumentoDados, que inclui a razão social do cliente — ver
+#   DocumentoDados.ChaveRazaoSocial)
 #
 # Azure SQL Edge em vez do SQL Server "real" pra funcionar em ARM64
 # (Apple Silicon); mesmo protocolo T-SQL.
@@ -10,8 +11,7 @@
 # homologação real, e a base URL em appsettings.json ainda está como
 # TODO(a-confirmar).
 #
-# As duas bases são de outros times: o worker não cria nem migra nenhuma
-# tabela.
+# A base é de outro time: o worker não cria nem migra nenhuma tabela.
 #
 # Uso:
 #   docker compose -f docker-compose.local.yml up -d
@@ -28,14 +28,3 @@ services:
       MSSQL_SA_PASSWORD: "Dev12345!"
     volumes:
       - ./.cobranca-sqlserver-data:/var/opt/mssql
-
-  adesao-sqlserver:
-    image: mcr.microsoft.com/azure-sql-edge:latest
-    container_name: cnab-adesao-sqlserver
-    ports:
-      - "1434:1433"
-    environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "Dev12345!"
-    volumes:
-      - ./.adesao-sqlserver-data:/var/opt/mssql

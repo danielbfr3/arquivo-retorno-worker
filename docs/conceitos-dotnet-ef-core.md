@@ -40,7 +40,7 @@ com ciclo de vida e regras de transição de estado**.
 - Records: `ArquivoPendente`, `NomeReconhecido`, `PlanilhaProcessada`,
   `ResumoVarredura` e os DTOs em `CnabRetorno.Core/Aplicacao/Dtos/`
   (`ConvertAsyncUploadResponse`, `MetadadosCliente`).
-- Classes: `Arquivo` e `EmpresaAdesao` (entidades EF, com identidade),
+- Classes: `Arquivo` e `DocumentoDados` (entidades EF, com identidade),
   repositórios e serviços de aplicação em geral. Note que `Arquivo` aqui é
   uma **projeção**, não a entidade rica: a máquina de estados de verdade
   (que valida transição status → etapa) mora na cash-cobranca-api, dona da
@@ -63,10 +63,10 @@ Ver `ConvertAsyncUploadResponse`: `JobId`, `Status` e `StatusUrl` são
 anuláveis porque uma resposta 200 malformada é possível, e é justamente
 por isso que `Aceito` checa o status em vez de assumir que ele veio.
 
-O mesmo aparece em `EmpresaAdesao.RazaoSocial` (`string?`): a coluna pode
-estar vazia na base de adesão, e o processador é obrigado pelo compilador
-a tratar esse caso — que é exatamente o que manda o arquivo pra
-quarentena em vez de enviar um JSON com razão social nula.
+O mesmo aparece em `DocumentoDados.ObterRazaoSocial` (retorno `string?`): a
+chave pode não existir no JSON, ou vir vazia, e o processador é obrigado
+pelo compilador a tratar esse caso — que é exatamente o que manda o
+arquivo pra quarentena em vez de enviar um JSON com razão social nula.
 
 ## 2. Injeção de dependência e hosting (Microsoft.Extensions.Hosting)
 
@@ -78,7 +78,7 @@ reproduzir em dev (só aparece sob concorrência real). Regra usada:
 | Ciclo de vida | Quando usar aqui | Exemplo |
 |---|---|---|
 | **Singleton** | Recurso caro de criar (ou imutável), seguro pra compartilhar entre tasks concorrentes | `NomeArquivoSimplificado` (regex compilada uma vez), `TimeProvider.System`, `PreenchedorPlanilhaExcel` (sem estado mutável — as opções vêm de `IOptions<T>`, resolvidas uma vez na construção) |
-| **Scoped** | Recurso barato de criar, **não thread-safe**, deve ter uma instância por "unidade de trabalho" | `CobrancaDbContext`, `AdesaoDbContext`, todos os serviços de aplicação |
+| **Scoped** | Recurso barato de criar, **não thread-safe**, deve ter uma instância por "unidade de trabalho" | `CobrancaDbContext`, todos os serviços de aplicação |
 | **Transient** | Sem estado nenhum entre chamadas — raro neste projeto especificamente | — |
 
 O caso mais importante do projeto: **`DbContext` do EF Core não é
@@ -225,10 +225,10 @@ ilegível pra quem inspeciona o payload do outro lado.
 ### Nenhum `DbContext` deste projeto é dono de schema
 
 Diferente de um projeto EF Core típico (onde o `DbContext` controla o
-schema via `OnModelCreating` + Migrations), `CobrancaDbContext` e
-`AdesaoDbContext` apontam pra bases SQL Server de outros times — **não são
-donos de nada**: mapeiam tabelas que já existem. Isso muda o tratamento em
-relação ao uso "padrão" de EF Core:
+schema via `OnModelCreating` + Migrations), `CobrancaDbContext` aponta pra
+uma base SQL Server de outro time — **não é dono de nada**: mapeia tabelas
+que já existem. Isso muda o tratamento em relação ao uso "padrão" de EF
+Core:
 
 - **Sem Migrations, nunca** — o schema é de outro sistema; rodar
   `dotnet ef migrations add` aqui não faz sentido.
@@ -250,8 +250,8 @@ mb.Entity<Arquivo>(e =>
 
 Duas sutilezas que valem registrar:
 
-- **`QueryTrackingBehavior.NoTracking` não impede escrita.** Os dois
-  contextos têm `NoTracking` global e ainda assim `db.Arquivos.Add(...)` +
+- **`QueryTrackingBehavior.NoTracking` não impede escrita.** O contexto tem
+  `NoTracking` global e ainda assim `db.Arquivos.Add(...)` +
   `SaveChangesAsync()` funciona — a configuração afeta só o resultado de
   *consultas*, não entidades que você adiciona explicitamente.
 - **Update sem carregar a entidade.** `MarcarInvalidoAsync` usa
@@ -266,15 +266,17 @@ Registrar um `DbContext` é igual a qualquer outro:
 ```csharp
 // Program.cs
 builder.Services.AddDbContext<CobrancaDbContext>(opt => opt.UseSqlServer(...));
-builder.Services.AddDbContext<AdesaoDbContext>(opt => opt.UseSqlServer(...));
 ```
 
-Isso escala pra múltiplos contextos sem problema — não tem limite de
-quantos `DbContext` diferentes um processo pode registrar, cada um com seu
-próprio provider e connection string, sem interferir entre si. Se o worker
-precisar de uma tabela **própria** algum dia (hoje não tem nenhuma), o
-padrão certo seria um terceiro `DbContext`, dono do seu schema — não
-misturar isso dentro de `CobrancaDbContext`, que existe justamente pra
+Isso escala pra múltiplos contextos sem problema, se algum dia for preciso
+— não tem limite de quantos `DbContext` diferentes um processo pode
+registrar, cada um com seu próprio provider e connection string, sem
+interferir entre si (este worker já teve um segundo `DbContext`, pra uma
+base de adesão separada — removido quando a razão social passou a vir do
+próprio JSON de `Cobranca.DocumentoDados`, ver `Core/Dominio/DocumentoDados.cs`).
+Se o worker precisar de uma tabela **própria** algum dia (hoje não tem
+nenhuma), o padrão certo seria um novo `DbContext`, dono do seu schema —
+não misturar isso dentro de `CobrancaDbContext`, que existe justamente pra
 falar com um schema de terceiro.
 
 ### Lock entre réplicas usando o banco que já existe

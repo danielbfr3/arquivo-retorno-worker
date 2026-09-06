@@ -17,9 +17,10 @@ public class OrigemOptions
     public string PastaBackup { get; set; } = "Backup";
 
     /// <summary>Subpasta pra onde vai o arquivo que não casou com a
-    /// máscara, cujo cliente não está na base de adesão, ou cujo envio
-    /// falhou. Nunca é apagado: descartar significaria perder a planilha
-    /// de um cliente em silêncio.</summary>
+    /// máscara, cujo documento não tem dados (ou razão social) em
+    /// Cobranca.DocumentoDados, ou cujo envio falhou. Nunca é apagado:
+    /// descartar significaria perder a planilha de um cliente em
+    /// silêncio.</summary>
     public string PastaQuarentena { get; set; } = "Quarentena";
 
     /// <summary>Ignora arquivos modificados há menos de X segundos, pra
